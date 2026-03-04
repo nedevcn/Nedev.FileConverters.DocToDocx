@@ -1076,6 +1076,14 @@ public class DocumentWriter
         _writer.WriteAttributeString("w", "gutter", wNs, "0");
         _writer.WriteEndElement();
 
+        // Mirror margins (left/right swapped on facing pages) – driven by DOP flag.
+        if (props.FMirrorMargins)
+        {
+            _writer.WriteStartElement("w", "mirrorMargins", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "1");
+            _writer.WriteEndElement();
+        }
+
         // Page numbering start (document-level only, for now)
         if (section == null && props.SectionStartPageNumber > 1)
         {
@@ -2276,6 +2284,13 @@ public class DocumentWriter
         if (props.IsStrikeThrough || props.IsDoubleStrikeThrough)
         {
             _writer.WriteStartElement("w", "strike", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+
+        // 5.5 hidden text
+        if (props.IsHidden)
+        {
+            _writer.WriteStartElement("w", "vanish", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             _writer.WriteEndElement();
         }
 
