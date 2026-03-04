@@ -568,10 +568,11 @@ public class ContentTypesWriter
         // Charts
         if (document.Charts.Count > 0)
         {
-            // Chart parts all share the same content type; we only need to
-            // register the first one explicitly because Word will infer the
-            // others from relationships and matching names.
-            WriteOverride("/word/charts/chart1.xml", "application/vnd.openxmlformats-officedocument.drawingml.chart+xml");
+            for (int i = 0; i < document.Charts.Count; i++)
+            {
+                var partName = $"/word/charts/chart{i + 1}.xml";
+                WriteOverride(partName, "application/vnd.openxmlformats-officedocument.drawingml.chart+xml");
+            }
         }
         
         _writer.WriteEndElement();

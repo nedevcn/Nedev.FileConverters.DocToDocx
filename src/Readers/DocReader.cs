@@ -58,6 +58,137 @@ public class DocReader : IDisposable
         InitializeStreams();
     }
 
+    /// <summary>
+    /// Attempts to infer simple category/series data for a chart from its
+    /// embedded OLE bytes. This is intentionally conservative and only looks
+    /// for small, tab/semicolon/comma-separated numeric tables inside the
+    /// stream; if nothing reasonable is found the method leaves the model
+    /// unchanged.
+    /// </summary>
+    private static void TryPopulateChartFromSourceBytes(ChartModel model)
+    {
+        var bytes = model.SourceBytes;
+        if (bytes == null || bytes.Length < 64)
+            return;
+
+        // Avoid spending too much time on very large embedded streams.
+        var maxBytes = Math.Min(bytes.Length, 512 * 1024);
+        string text;
+        try
+        {
+            // First try ANSI/UTF-8 style decoding.
+            text = Encoding.Default.GetString(bytes, 0, maxBytes);
+        }
+        catch
+        {
+            return;
+        }
+
+        // Heuristic: require at least a few digits to consider this as
+        // potentially containing chart data.
+        if (!text.Any(char.IsDigit))
+            return;
+
+        var lines = text
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Take(200)
+            .ToList();
+
+        if (lines.Count < 2)
+            return;
+
+        // Tokenize by common separators.
+        static string[] SplitTokens(string line)
+        {
+            return line
+                .Split(new[] { '\t', ';', ',', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim())
+                .Where(t => t.Length > 0)
+                .ToArray();
+        }
+
+        var tokenLines = lines
+            .Select(l => new { Line = l, Tokens = SplitTokens(l) })
+            .Where(t => t.Tokens.Length >= 2)
+            .ToList();
+
+        if (tokenLines.Count < 2)
+            return;
+
+        // Use the first line as categories when it looks textual; otherwise
+        // generate default category labels.
+        var first = tokenLines[0];
+        var second = tokenLines[1];
+
+        var tokens = first.Tokens;
+        bool firstLineLooksNumeric = tokens.All(tok =>
+        {
+            return double.TryParse(tok, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out _);
+        });
+
+        List<string> categories;
+        if (!firstLineLooksNumeric)
+        {
+            categories = tokens.ToList();
+        }
+        else
+        {
+            categories = Enumerable.Range(1, second.Tokens.Length)
+                .Select(i => $"Category {i}")
+                .ToList();
+        }
+
+        // Use the next few lines as series values, aligning length with categories.
+        var seriesList = new List<ChartSeries>();
+        for (int i = 1; i < tokenLines.Count && i <= 5; i++)
+        {
+            var lineInfo = tokenLines[i];
+            var valuesRaw = lineInfo.Tokens;
+            var values = new List<double>();
+            foreach (var tok in valuesRaw)
+            {
+                if (double.TryParse(tok, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var v))
+                {
+                    values.Add(v);
+                }
+                else
+                {
+                    // Non-numeric token – bail out of this heuristic series.
+                    values.Clear();
+                    break;
+                }
+            }
+
+            if (values.Count == 0)
+                continue;
+
+            // Align with category count.
+            if (values.Count < categories.Count)
+            {
+                while (values.Count < categories.Count)
+                    values.Add(0);
+            }
+            else if (values.Count > categories.Count)
+            {
+                values = values.Take(categories.Count).ToList();
+            }
+
+            seriesList.Add(new ChartSeries
+            {
+                Name = $"Series {i}",
+                Values = values
+            });
+        }
+
+        if (seriesList.Count == 0)
+            return;
+
+        model.Categories = categories;
+        model.Series = seriesList;
+    }
+
     public DocReader(Stream stream)
     {
         _cfb = new CfbReader(stream, leaveOpen: true);
@@ -218,11 +349,12 @@ public class DocReader : IDisposable
             OfficeArtMapper.AttachShapes(Document, _officeArtReader, _fspaAnchors);
         }
 
-        // Step 6.6: Best-effort chart detection. For now we only recognise
-        // streams whose names contain "Chart" in the OLE container and attach
-        // a minimal ChartModel with placeholder data so that the writer can
-        // emit editable DOCX chart parts. This is intentionally conservative
-        // and does not attempt to recover real series data yet.
+        // Step 6.6: Best-effort chart detection. We recognise streams whose
+        // names contain "Chart" in the OLE container and attach ChartModel
+        // instances. A lightweight heuristic then tries to recover real
+        // category/value data from the embedded stream; when that fails we
+        // fall back to placeholder data so the resulting chart remains
+        // editable in Word.
         AttachPlaceholderCharts();
 
         // Step 7: Read footnotes
@@ -311,10 +443,47 @@ public class DocReader : IDisposable
                     }
                 },
                 SourceStreamName = name,
-                SourceBytes = sourceBytes
+                SourceBytes = sourceBytes,
+                ParagraphIndexHint = -1
             };
 
+            // Best-effort attempt to recover real categories/series from the
+            // embedded bytes; falls back to the placeholder data above when
+            // nothing sensible can be inferred.
+            TryPopulateChartFromSourceBytes(model);
+
             Document.Charts.Add(model);
+        }
+
+        // If we still do not have paragraph hints for charts, distribute them
+        // roughly evenly across "normal" paragraphs so that each chart appears
+        // near some body text rather than all being appended at the end.
+        if (Document.Paragraphs.Count > 0)
+        {
+            var candidateParagraphIndices = Document.Paragraphs
+                .Where(p => p.Type == ParagraphType.Normal)
+                .Select(p => p.Index)
+                .ToList();
+
+            if (candidateParagraphIndices.Count == 0)
+            {
+                candidateParagraphIndices = Document.Paragraphs.Select(p => p.Index).ToList();
+            }
+
+            if (candidateParagraphIndices.Count > 0)
+            {
+                var chartsNeedingPlacement = Document.Charts
+                    .Where(c => c.ParagraphIndexHint < 0)
+                    .ToList();
+
+                for (int i = 0; i < chartsNeedingPlacement.Count; i++)
+                {
+                    var target = candidateParagraphIndices[
+                        (int)((long)i * candidateParagraphIndices.Count / chartsNeedingPlacement.Count)
+                    ];
+                    chartsNeedingPlacement[i].ParagraphIndexHint = target;
+                }
+            }
         }
     }
 

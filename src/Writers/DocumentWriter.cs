@@ -12,6 +12,7 @@ public class DocumentWriter
     private readonly XmlWriter _writer;
     private int _runId = 0;
     private DocumentModel? _document;
+    private DocumentRelationshipIds? _relationshipIds;
     private readonly Dictionary<string, int> _bookmarkIds = new(StringComparer.Ordinal);
     private int _bookmarkCounter = 0;
     
@@ -21,11 +22,137 @@ public class DocumentWriter
     }
     
     /// <summary>
+    /// Builds a mapping from paragraph index to charts that should be emitted
+    /// near that paragraph, based on ChartModel.ParagraphIndexHint. Charts
+    /// whose hints are out of range are ignored here and will be handled by
+    /// later fallback logic when needed.
+    /// </summary>
+    private static Dictionary<int, List<ChartModel>> BuildChartsByParagraphMap(DocumentModel document)
+    {
+        var map = new Dictionary<int, List<ChartModel>>();
+        if (document.Charts == null || document.Charts.Count == 0)
+            return map;
+
+        int maxParagraphIndex = document.Paragraphs.Count > 0
+            ? document.Paragraphs.Max(p => p.Index)
+            : -1;
+
+        foreach (var chart in document.Charts)
+        {
+            if (chart.ParagraphIndexHint < 0)
+                continue;
+            if (chart.ParagraphIndexHint > maxParagraphIndex)
+                continue;
+
+            if (!map.TryGetValue(chart.ParagraphIndexHint, out var list))
+            {
+                list = new List<ChartModel>();
+                map[chart.ParagraphIndexHint] = list;
+            }
+
+            list.Add(chart);
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Writes an inline chart reference for the given ChartModel using a
+    /// standard wp:inline + a:graphic + c:chart structure.
+    /// </summary>
+    private void WriteChartInline(ChartModel chart, int chartIndex)
+    {
+        if (_document == null || _relationshipIds == null)
+            return;
+
+        // If we have no chart relationship block reserved, bail out.
+        if (_relationshipIds.FirstChartRId <= 0)
+            return;
+
+        int relNumericId = _relationshipIds.FirstChartRId + chartIndex;
+        if (relNumericId <= 0)
+            return;
+
+        string relId = $"rId{relNumericId}";
+
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        const string wpNs = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+        // Reasonable default size for charts (~6x4 inches).
+        int widthEmu = 5715000;
+        int heightEmu = 3810000;
+
+        _writer.WriteStartElement("w", "p", wNs);
+
+        // Center the chart paragraph by default.
+        _writer.WriteStartElement("w", "pPr", wNs);
+        _writer.WriteStartElement("w", "jc", wNs);
+        _writer.WriteAttributeString("w", "val", wNs, "center");
+        _writer.WriteEndElement(); // w:jc
+        _writer.WriteEndElement(); // w:pPr
+
+        _writer.WriteStartElement("w", "r", wNs);
+        _writer.WriteStartElement("w", "drawing", wNs);
+
+        _writer.WriteStartElement("wp", "inline", wpNs);
+        _writer.WriteAttributeString("distT", "0");
+        _writer.WriteAttributeString("distB", "0");
+        _writer.WriteAttributeString("distL", "0");
+        _writer.WriteAttributeString("distR", "0");
+
+        _writer.WriteStartElement("wp", "extent", wpNs);
+        _writer.WriteAttributeString("cx", widthEmu.ToString());
+        _writer.WriteAttributeString("cy", heightEmu.ToString());
+        _writer.WriteEndElement(); // wp:extent
+
+        _writer.WriteStartElement("wp", "effectExtent", wpNs);
+        _writer.WriteAttributeString("l", "0");
+        _writer.WriteAttributeString("t", "0");
+        _writer.WriteAttributeString("r", "0");
+        _writer.WriteAttributeString("b", "0");
+        _writer.WriteEndElement(); // wp:effectExtent
+
+        // docPr with a simple name derived from the chart index or title.
+        _writer.WriteStartElement("wp", "docPr", wpNs);
+        _writer.WriteAttributeString("id", (1000 + chartIndex).ToString());
+        var baseName = !string.IsNullOrEmpty(chart.Title) ? chart.Title : $"Chart {chartIndex + 1}";
+        _writer.WriteAttributeString("name", baseName);
+        _writer.WriteEndElement(); // wp:docPr
+
+        // Non-visual graphic frame properties.
+        _writer.WriteStartElement("wp", "cNvGraphicFramePr", wpNs);
+        _writer.WriteStartElement("a", "graphicFrameLocks", aNs);
+        _writer.WriteAttributeString("noChangeAspect", "1");
+        _writer.WriteEndElement(); // a:graphicFrameLocks
+        _writer.WriteEndElement(); // wp:cNvGraphicFramePr
+
+        // a:graphic / a:graphicData / c:chart
+        _writer.WriteStartElement("a", "graphic", aNs);
+        _writer.WriteStartElement("a", "graphicData", aNs);
+        _writer.WriteAttributeString("uri", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+        _writer.WriteStartElement("c", "chart", cNs);
+        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", relId);
+        _writer.WriteEndElement(); // c:chart
+
+        _writer.WriteEndElement(); // a:graphicData
+        _writer.WriteEndElement(); // a:graphic
+
+        _writer.WriteEndElement(); // wp:inline
+        _writer.WriteEndElement(); // w:drawing
+        _writer.WriteEndElement(); // w:r
+        _writer.WriteEndElement(); // w:p
+    }
+
+    /// <summary>
     /// Writes the document content
     /// </summary>
     public void WriteDocument(DocumentModel document)
     {
         _document = document;
+        _relationshipIds = RelationshipsWriter.ComputeRelationshipIds(document);
         
         _writer.WriteStartDocument();
         _writer.WriteStartElement("w", "document", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -39,6 +166,7 @@ public class DocumentWriter
         _writer.WriteAttributeString("xmlns", "wps", null, "http://schemas.microsoft.com/office/word/2010/wordprocessingShape");
         _writer.WriteAttributeString("xmlns", "v", null, "urn:schemas-microsoft-com:vml");
         _writer.WriteAttributeString("xmlns", "o", null, "urn:schemas-microsoft-com:office:office");
+        _writer.WriteAttributeString("xmlns", "c", null, "http://schemas.openxmlformats.org/drawingml/2006/chart");
         
         WriteBody(document);
         
@@ -65,6 +193,10 @@ public class DocumentWriter
         
         // Precompute shapes to emit near specific paragraphs and avoid duplicate images
         var shapesByParagraph = BuildShapesByParagraphMap(document, out var usedImageIndices);
+
+        // Precompute charts to emit near specific paragraphs where we have
+        // hints; charts without hints will be emitted near the end.
+        var chartsByParagraph = BuildChartsByParagraphMap(document);
 
         // Write content: paragraphs and tables
         int paraIndex = 0;
@@ -102,6 +234,15 @@ public class DocumentWriter
                     _writer.WriteEndElement();
                 }
 
+                // Emit any charts associated with this paragraph
+                if (chartsByParagraph.TryGetValue(paragraph.Index, out var chartsForParagraph))
+                {
+                    foreach (var chart in chartsForParagraph)
+                    {
+                        WriteChartInline(chart, chart.Index);
+                    }
+                }
+
                 // Emit any shapes that are associated with this paragraph
                 if (shapesByParagraph.TryGetValue(paragraph.Index, out var shapesForParagraph))
                 {
@@ -114,7 +255,7 @@ public class DocumentWriter
                 paraIndex++;
             }
         }
-        
+
         // Write textboxes after main body content
         WriteTextboxes(document);
         
