@@ -11,6 +11,7 @@ public class DocumentModel
     public List<ParagraphModel> Paragraphs { get; set; } = new();
     public List<TableModel> Tables { get; set; } = new();
     public List<ImageModel> Images { get; set; } = new();
+    public List<ShapeModel> Shapes { get; set; } = new();
     public List<BookmarkModel> Bookmarks { get; set; } = new();
     public List<HyperlinkModel> Hyperlinks { get; set; } = new();
     public List<FootnoteModel> Footnotes { get; set; } = new();
@@ -259,6 +260,41 @@ public enum ParagraphAlignment
     Justify = 3,
     Distributed = 4,
     ThaiJustify = 5
+}
+
+/// <summary>
+/// Lightweight shape model used for OfficeArt/Escher-based drawing objects.
+/// </summary>
+public class ShapeModel
+{
+    public int Id { get; set; }
+    public ShapeType Type { get; set; } = ShapeType.Unknown;
+    public ShapeAnchor? Anchor { get; set; }
+    public int? ImageIndex { get; set; }
+    public string? Text { get; set; }
+}
+
+public enum ShapeType
+{
+    Unknown,
+    Picture,
+    Rectangle,
+    Ellipse,
+    Textbox
+}
+
+/// <summary>
+/// Anchor information for floating/inline shapes, expressed in twips.
+/// </summary>
+public class ShapeAnchor
+{
+    public bool IsFloating { get; set; }
+    public int PageIndex { get; set; }
+    public int ParagraphIndex { get; set; }
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
 }
 
 /// <summary>

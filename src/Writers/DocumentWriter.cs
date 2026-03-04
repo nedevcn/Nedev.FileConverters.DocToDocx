@@ -105,10 +105,47 @@ public class DocumentWriter
         
         // Write textboxes after main body content
         WriteTextboxes(document);
+
+        // Write shapes (currently pictures only) after main body content.
+        WriteShapes(document);
         
         WriteSections(document);
         
         _writer.WriteEndElement(); // w:body
+    }
+
+    /// <summary>
+    /// Writes shapes captured from OfficeArt/Escher as inline pictures for now.
+    /// 后续可以根据 ShapeAnchor 信息改为真正的 wp:anchor 浮动形状。
+    /// </summary>
+    private void WriteShapes(DocumentModel document)
+    {
+        if (document.Shapes == null || document.Shapes.Count == 0)
+            return;
+
+        foreach (var shape in document.Shapes)
+        {
+            if (shape.Type != ShapeType.Picture || shape.ImageIndex is null)
+                continue;
+
+            var imageIndex = shape.ImageIndex.Value;
+            if (imageIndex < 0 || imageIndex >= document.Images.Count)
+                continue;
+
+            // Reuse existing picture-writing logic by creating a minimal RunModel.
+            var run = new RunModel
+            {
+                IsPicture = true,
+                ImageIndex = imageIndex,
+                Properties = new RunProperties()
+            };
+
+            _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            WriteRun(run);
+            _writer.WriteEndElement(); // w:r
+            _writer.WriteEndElement(); // w:p
+        }
     }
     
     private void WriteSections(DocumentModel document)

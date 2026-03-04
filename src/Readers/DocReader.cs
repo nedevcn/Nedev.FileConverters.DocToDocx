@@ -37,6 +37,7 @@ public class DocReader : IDisposable
     private ListReader? _listReader;
     private FieldReader? _fieldReader;
     private HyperlinkReader? _hyperlinkReader;
+    private OfficeArtReader? _officeArtReader;
 
     // Keep streams alive for reader lifetime
     private MemoryStream? _wordDocStream;
@@ -110,6 +111,16 @@ public class DocReader : IDisposable
                 ? _cfb.GetDecryptedStream("Data")
                 : _cfb.GetStream("Data");
             _dataReader = new BinaryReader(_dataStream, Encoding.Default, leaveOpen: true);
+
+            // Initialize OfficeArt/Escher reader on the Data stream (best-effort).
+            try
+            {
+                _officeArtReader = new OfficeArtReader(_dataStream);
+            }
+            catch
+            {
+                _officeArtReader = null;
+            }
         }
 
         // Extract footnote/endnote streams (optional)
@@ -189,6 +200,12 @@ public class DocReader : IDisposable
 
         // Step 6: Extract images
         _imageReader!.ExtractImages(Document);
+
+        // Step 6.5: Parse OfficeArt/Escher shapes (best-effort, does not affect text flow)
+        if (_officeArtReader != null)
+        {
+            OfficeArtMapper.AttachShapes(Document, _officeArtReader);
+        }
 
         // Step 7: Read footnotes
         if (_footnoteReader != null)
