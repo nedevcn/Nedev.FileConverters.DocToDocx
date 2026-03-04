@@ -723,8 +723,85 @@ public class TableReader
                 firstRow.Properties.IsHeaderRow = true;
             }
 
+            // 基于内容的启发式：推断纵向合并（RowSpan）。
+            // 如果同一列中连续多行的单元格，只有首行有文本内容，而后续行对应单元格为空，
+            // 则认为这些单元格在原始文档中是一个“纵向合并单元格”，设置首单元格的 RowSpan。
+            if (currentTable.ColumnCount > 0)
+            {
+                for (int col = 0; col < currentTable.ColumnCount; col++)
+                {
+                    int row = 0;
+                    while (row < currentTable.Rows.Count)
+                    {
+                        var startCell = GetCell(currentTable, row, col);
+                        if (startCell == null)
+                        {
+                            row++;
+                            continue;
+                        }
+
+                        // 仅当首单元格包含可见文本时才尝试纵向合并，避免误合并多个空白行。
+                        if (!CellHasContent(startCell))
+                        {
+                            row++;
+                            continue;
+                        }
+
+                        int span = 1;
+                        int nextRow = row + 1;
+                        while (nextRow < currentTable.Rows.Count)
+                        {
+                            var nextCell = GetCell(currentTable, nextRow, col);
+                            if (nextCell == null)
+                            {
+                                break;
+                            }
+
+                            // 一旦遇到包含内容的单元格，就停止扩展合并区域。
+                            if (CellHasContent(nextCell))
+                            {
+                                break;
+                            }
+
+                            span++;
+                            nextRow++;
+                        }
+
+                        if (span > 1)
+                        {
+                            startCell.RowSpan = span;
+                            row += span;
+                        }
+                        else
+                        {
+                            row++;
+                        }
+                    }
+                }
+            }
+
             tables.Add(currentTable);
             currentTable = null;
+
+            static TableCellModel? GetCell(TableModel table, int rowIndex, int columnIndex)
+            {
+                if (rowIndex < 0 || rowIndex >= table.Rows.Count) return null;
+                var row = table.Rows[rowIndex];
+                if (columnIndex < 0 || columnIndex >= row.Cells.Count) return null;
+                return row.Cells[columnIndex];
+            }
+
+            static bool CellHasContent(TableCellModel cell)
+            {
+                foreach (var para in cell.Paragraphs)
+                {
+                    if (para.Runs.Any(r => !string.IsNullOrEmpty(r.Text)))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
     }
 }
