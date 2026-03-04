@@ -759,13 +759,23 @@ public class DocumentWriter
             _writer.WriteEndElement();
         }
         
-        // Table width (auto)
+        // Table width: prefer an explicit width from TAP when available, otherwise
+        // let Word auto-size based on content.
         _writer.WriteStartElement("w", "tblW", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "0");
-        _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "auto");
+        var preferredWidth = table.Properties?.PreferredWidth ?? 0;
+        if (preferredWidth > 0)
+        {
+            _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", preferredWidth.ToString());
+            _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
+        }
+        else
+        {
+            _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "0");
+            _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "auto");
+        }
         _writer.WriteEndElement();
         
-        // Table justification
+        // Table justification (alignment)
         if (table.Properties != null && table.Properties.Alignment != TableAlignment.Left)
         {
             _writer.WriteStartElement("w", "jc", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -776,6 +786,16 @@ public class DocumentWriter
                 _ => "left"
             };
             _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", alignment);
+            _writer.WriteEndElement();
+        }
+        
+        // Table indent from left margin, when specified. This mirrors sprmTDxaLeft
+        // and helps nested or offset tables align closer to the original layout.
+        if (table.Properties != null && table.Properties.Indent != 0)
+        {
+            _writer.WriteStartElement("w", "tblInd", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", table.Properties.Indent.ToString());
+            _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
             _writer.WriteEndElement();
         }
         
@@ -800,14 +820,24 @@ public class DocumentWriter
             WriteShading(table.Properties.Shading);
         }
         
-        // Table cell margin
+        // Table cell margin: when the TAP exposes an inter-cell spacing we map it
+        // to symmetric left/right padding; otherwise we fall back to a sensible
+        // default that keeps existing documents visually similar.
+        var spacing = table.Properties?.CellSpacing ?? 0;
+        // Clamp to a small, non-negative range so extreme values from corrupted
+        // documents do not explode layout.
+        if (spacing < 0) spacing = 0;
+        if (spacing > 720) spacing = 720; // max 0.5"
+
+        int sidePadding = spacing > 0 ? spacing / 2 : 108;
+
         _writer.WriteStartElement("w", "tblCellMar", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         _writer.WriteStartElement("w", "top", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "0");
         _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
         _writer.WriteEndElement();
         _writer.WriteStartElement("w", "left", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "108");
+        _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", sidePadding.ToString());
         _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
         _writer.WriteEndElement();
         _writer.WriteStartElement("w", "bottom", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -815,7 +845,7 @@ public class DocumentWriter
         _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
         _writer.WriteEndElement();
         _writer.WriteStartElement("w", "right", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "108");
+        _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", sidePadding.ToString());
         _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
         _writer.WriteEndElement();
         _writer.WriteEndElement();

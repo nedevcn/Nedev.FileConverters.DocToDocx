@@ -12,6 +12,14 @@ public class TableModel
     public TableProperties? Properties { get; set; }
     public int StartParagraphIndex { get; set; }
     public int EndParagraphIndex { get; set; }
+    
+    /// <summary>
+    /// Current implementation models only top-level tables laid out on the main
+    /// document text stream. Nested tables (a table entirely inside a cell of
+    /// another table) are flattened into multiple top-level TableModel instances
+    /// that share paragraph ranges. This keeps the reader/writer pipeline simple
+    /// but means extremely complex nested layouts may not be reproduced exactly.
+    /// </summary>
 }
 
 /// <summary>
@@ -47,6 +55,13 @@ public class TableProperties
     public int CellSpacing { get; set; }
     public int Indent { get; set; }
     public TableAlignment Alignment { get; set; } = TableAlignment.Left;
+    
+    /// <summary>
+    /// Preferred table width in twips when specified by the TAP. A value of 0
+    /// means "auto" and lets Word lay out the table based on content.
+    /// </summary>
+    public int PreferredWidth { get; set; }
+    
     public BorderInfo? BorderTop { get; set; }
     public BorderInfo? BorderBottom { get; set; }
     public BorderInfo? BorderLeft { get; set; }

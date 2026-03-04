@@ -538,9 +538,12 @@ public class DocReader : IDisposable
 }
 
 /// <summary>
-/// Table reader — parses table structures from document.
-/// Phase 1: simplified detection based on cell marks in text.
-/// Phase 3 will implement full TAP SPRM parsing.
+    /// Table reader — parses table structures from document.
+    /// Uses a combination of ParagraphType.TableCell markers and TAP (table
+    /// properties) decoded from PAP/FKP data. This gives reasonably faithful
+    /// reconstruction of row heights, header rows and horizontal/vertical merges
+    /// for the common cases while deliberately avoiding the full generality of
+    /// nested tables and exotic merge patterns present in the MS-DOC format.
 /// </summary>
 public class TableReader
 {
@@ -569,7 +572,7 @@ public class TableReader
             var cellsInCurrentRow = new List<TableCellModel>();
             int lastTableParagraphIndex = -1;
             TapBase? currentRowTap = null;
-            // 保留每一行对应的 TAP 信息，用于之后根据 TC.grfw 计算单元格纵向合并。
+            // 保留每一行对应的 TAP 信息，用于之后根据 TC.grfw 计算单元格纵向/横向合并。
             var rowTaps = new List<TapBase?>();
 
         foreach (var para in document.Paragraphs.OrderBy(p => p.Index))
@@ -612,7 +615,7 @@ public class TableReader
                 {
                     // Map TAP‑level table properties into the high‑level model so that
                     // the writer can faithfully reproduce alignment, indent, spacing
-                    // and table‑wide borders / shading.
+                    // table width, and table‑wide borders / shading.
                     currentTable.Properties = new TableProperties
                     {
                         Alignment = tapForParagraph.Justification switch
@@ -627,6 +630,7 @@ public class TableReader
                             ? tapForParagraph.CellSpacing
                             : (tapForParagraph.GapHalf != 0 ? tapForParagraph.GapHalf * 2 : 0),
                         Indent = tapForParagraph.IndentLeft,
+                        PreferredWidth = tapForParagraph.TableWidth,
                         BorderTop = tapForParagraph.BorderTop,
                         BorderBottom = tapForParagraph.BorderBottom,
                         BorderLeft = tapForParagraph.BorderLeft,
