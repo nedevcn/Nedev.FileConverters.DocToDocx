@@ -6,14 +6,15 @@ A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party
 
 - **Binary `.doc` reader**: Implements core MS‑DOC structures (CFB, FIB, CLX/Piece Table, CHPX/PAPX FKPs, PLCFs).
 - **Rich text & styles**: Fonts, font sizes, bold/italic/underline, colors, highlighting, outline/emboss/shadow, language (`w:lang`), paragraph alignment, spacing, indentation, borders, shading, and numbered/bulleted lists (including many localized formats).
-- **Tables**: Multi‑row/column tables with row height, header rows, cantSplit, alignment, per‑cell width, and TAP‑driven layout; writer side supports proper vertical merges (`vMerge restart/continue`).
+- **Tables**: Multi‑row/column tables with TAP‑driven layout: row height and exact/at‑least rules, header rows, `cantSplit`, per‑cell width, proper vertical merges (`vMerge restart/continue`), horizontal merges (`gridSpan`), table‑level borders and shading mapped to DOCX.
 - **Sections & page setup**: Multiple sections with page size/orientation, margins, starting page number, and First/Odd/Even headers/footers mapped to separate DOCX parts.
-- **Images**: Extracts embedded images from the `Data` stream (PNG/JPEG/GIF/BMP/OfficeArt BLIPs), writes `word/media/*`, generates `w:drawing` with size inferred from image dimensions and auto‑scaled to page width, plus basic alt text.
+- **Images**: Extracts embedded images from the `WordDocument` and `Data` streams (PNG/JPEG/GIF/BMP/OfficeArt BLIPs), writes `word/media/*`, generates `w:drawing` with size inferred from image dimensions and auto‑scaled to page width, respects per‑image scale, and attaches basic alt text.
+- **OfficeArt pictures & floating anchors**: Parses Escher/OfficeArt records and FSPA anchors from `PlcSpaMom` to recover picture shapes; maps them to `wp:anchor` floating images positioned relative to the page, falling back to inline images when anchors are unavailable.
 - **Footnotes, endnotes, comments, textboxes**: Reads and writes common note and annotation structures into DOCX footnotes/endnotes parts and DrawingML textboxes.
 - **Encryption (XOR)**: Supports Word’s XOR‑obfuscated streams via `EncryptionHelper` and decrypted CFB streams.
 - **No external dependencies**: Pure .NET, streaming writers (`XmlWriter`) for high performance and low memory usage.
 
-> Note: While many MS‑DOC features are implemented, the converter does not yet claim 100% coverage of the full [MS‑DOC] specification. Complex OfficeArt shapes, OLE objects, and some rare formatting cases are intentionally out of scope for now.
+> Note: While many MS‑DOC features are implemented (including OfficeArt‑based picture extraction and floating anchors), the converter does not yet claim 100% coverage of the full [MS‑DOC] / [MS‑ODRAW] specifications. Complex vector shapes, SmartArt, charts, OLE objects, and some rare formatting cases remain intentionally out of scope for now.
 
 ## Library usage
 
