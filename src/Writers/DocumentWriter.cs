@@ -22,6 +22,278 @@ public class DocumentWriter
     }
     
     /// <summary>
+    /// Writes a basic vector shape (non-picture OfficeArt / SmartArt fallback)
+    /// as a DrawingML wordprocessingShape rectangle. Position and size are
+    /// taken from ShapeAnchor when available; otherwise a reasonable inline
+    /// size is used.
+    /// </summary>
+    private void WriteVectorShape(ShapeModel shape)
+    {
+        if (_document == null)
+            return;
+
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        const string wpNs = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        const string wpsNs = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+
+        // Derive size in EMUs from anchor or use a default (~4x3 inches).
+        const int emuPerTwip = 635;
+        int widthEmu = 3657600;  // 4"
+        int heightEmu = 2743200; // 3"
+        int xEmu = 0;
+        int yEmu = 0;
+        bool isFloating = false;
+
+        if (shape.Anchor != null)
+        {
+            var anchor = shape.Anchor;
+            if (anchor.Width > 0)
+            {
+                widthEmu = anchor.Width * emuPerTwip;
+            }
+            if (anchor.Height > 0)
+            {
+                heightEmu = anchor.Height * emuPerTwip;
+            }
+            xEmu = Math.Max(0, anchor.X * emuPerTwip);
+            yEmu = Math.Max(0, anchor.Y * emuPerTwip);
+            isFloating = anchor.IsFloating;
+        }
+
+        // Clamp width to page width (inside margins) while preserving aspect ratio.
+        if (_document.Properties != null)
+        {
+            var page = _document.Properties;
+            var maxWidthTwips = page.PageWidth - page.MarginLeft - page.MarginRight;
+            if (maxWidthTwips > 0)
+            {
+                var maxWidthEmu = maxWidthTwips * emuPerTwip;
+                if (widthEmu > maxWidthEmu && widthEmu > 0 && heightEmu > 0)
+                {
+                    var scale = (double)maxWidthEmu / widthEmu;
+                    widthEmu = maxWidthEmu;
+                    heightEmu = (int)(heightEmu * scale);
+                }
+            }
+        }
+
+        _writer.WriteStartElement("w", "p", wNs);
+        _writer.WriteStartElement("w", "r", wNs);
+        _writer.WriteStartElement("w", "drawing", wNs);
+
+        if (isFloating)
+        {
+            // Floating vector shape using wp:anchor (similar to floating picture).
+            _writer.WriteStartElement("wp", "anchor", wpNs);
+            _writer.WriteAttributeString("distT", "0");
+            _writer.WriteAttributeString("distB", "0");
+            _writer.WriteAttributeString("distL", "0");
+            _writer.WriteAttributeString("distR", "0");
+            _writer.WriteAttributeString("simplePos", "0");
+            var relHeight = shape.Anchor?.ZOrder ?? 0;
+            if (relHeight < 0) relHeight = 0;
+            _writer.WriteAttributeString("relativeHeight", relHeight.ToString());
+            _writer.WriteAttributeString("behindDoc", "0");
+            _writer.WriteAttributeString("locked", "0");
+            _writer.WriteAttributeString("layoutInCell", "1");
+            _writer.WriteAttributeString("allowOverlap", "1");
+
+            // Horizontal & vertical position.
+            _writer.WriteStartElement("wp", "positionH", wpNs);
+            _writer.WriteAttributeString("relativeFrom", "page");
+            _writer.WriteStartElement("wp", "posOffset", wpNs);
+            _writer.WriteString(xEmu.ToString());
+            _writer.WriteEndElement(); // wp:posOffset
+            _writer.WriteEndElement(); // wp:positionH
+
+            _writer.WriteStartElement("wp", "positionV", wpNs);
+            _writer.WriteAttributeString("relativeFrom", "page");
+            _writer.WriteStartElement("wp", "posOffset", wpNs);
+            _writer.WriteString(yEmu.ToString());
+            _writer.WriteEndElement(); // wp:posOffset
+            _writer.WriteEndElement(); // wp:positionV
+
+            // Extent
+            _writer.WriteStartElement("wp", "extent", wpNs);
+            _writer.WriteAttributeString("cx", widthEmu.ToString());
+            _writer.WriteAttributeString("cy", heightEmu.ToString());
+            _writer.WriteEndElement();
+
+            // Effect extent
+            _writer.WriteStartElement("wp", "effectExtent", wpNs);
+            _writer.WriteAttributeString("l", "0");
+            _writer.WriteAttributeString("t", "0");
+            _writer.WriteAttributeString("r", "0");
+            _writer.WriteAttributeString("b", "0");
+            _writer.WriteEndElement();
+
+            // Text wrapping: square by default for shapes.
+            _writer.WriteStartElement("wp", "wrapSquare", wpNs);
+            _writer.WriteAttributeString("wrapText", "bothSides");
+            _writer.WriteEndElement();
+
+            // docPr
+            _writer.WriteStartElement("wp", "docPr", wpNs);
+            _writer.WriteAttributeString("id", (2000 + shape.Id).ToString());
+            _writer.WriteAttributeString("name", $"Shape {shape.Id}");
+            _writer.WriteEndElement(); // wp:docPr
+
+            // Graphic frame props
+            _writer.WriteStartElement("wp", "cNvGraphicFramePr", wpNs);
+            _writer.WriteStartElement("a", "graphicFrameLocks", aNs);
+            _writer.WriteAttributeString("noChangeAspect", "1");
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+
+            // Graphic
+            _writer.WriteStartElement("a", "graphic", aNs);
+            _writer.WriteStartElement("a", "graphicData", aNs);
+            _writer.WriteAttributeString("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape");
+
+            // WordprocessingShape (rectangle/ellipse etc.)
+            WriteWpsShape(shape, widthEmu, heightEmu);
+
+            _writer.WriteEndElement(); // a:graphicData
+            _writer.WriteEndElement(); // a:graphic
+
+            _writer.WriteEndElement(); // wp:anchor
+        }
+        else
+        {
+            // Inline vector shape using wp:inline.
+            _writer.WriteStartElement("wp", "inline", wpNs);
+            _writer.WriteAttributeString("distT", "0");
+            _writer.WriteAttributeString("distB", "0");
+            _writer.WriteAttributeString("distL", "0");
+            _writer.WriteAttributeString("distR", "0");
+
+            _writer.WriteStartElement("wp", "extent", wpNs);
+            _writer.WriteAttributeString("cx", widthEmu.ToString());
+            _writer.WriteAttributeString("cy", heightEmu.ToString());
+            _writer.WriteEndElement(); // wp:extent
+
+            _writer.WriteStartElement("wp", "effectExtent", wpNs);
+            _writer.WriteAttributeString("l", "0");
+            _writer.WriteAttributeString("t", "0");
+            _writer.WriteAttributeString("r", "0");
+            _writer.WriteAttributeString("b", "0");
+            _writer.WriteEndElement(); // wp:effectExtent
+
+            _writer.WriteStartElement("wp", "docPr", wpNs);
+            _writer.WriteAttributeString("id", (2000 + shape.Id).ToString());
+            _writer.WriteAttributeString("name", $"Shape {shape.Id}");
+            _writer.WriteEndElement(); // wp:docPr
+
+            _writer.WriteStartElement("wp", "cNvGraphicFramePr", wpNs);
+            _writer.WriteStartElement("a", "graphicFrameLocks", aNs);
+            _writer.WriteAttributeString("noChangeAspect", "1");
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+
+            _writer.WriteStartElement("a", "graphic", aNs);
+            _writer.WriteStartElement("a", "graphicData", aNs);
+            _writer.WriteAttributeString("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape");
+
+            WriteWpsShape(shape, widthEmu, heightEmu);
+
+            _writer.WriteEndElement(); // a:graphicData
+            _writer.WriteEndElement(); // a:graphic
+
+            _writer.WriteEndElement(); // wp:inline
+        }
+
+        _writer.WriteEndElement(); // w:drawing
+        _writer.WriteEndElement(); // w:r
+        _writer.WriteEndElement(); // w:p
+    }
+
+    /// <summary>
+    /// Writes the inner wps:wsp contents (geometry and basic styling) for a
+    /// vector shape.
+    /// </summary>
+    private void WriteWpsShape(ShapeModel shape, int widthEmu, int heightEmu)
+    {
+        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        const string wpsNs = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+
+        _writer.WriteStartElement("wps", "wsp", wpsNs);
+
+        // spPr
+        _writer.WriteStartElement("wps", "spPr", wpsNs);
+        _writer.WriteStartElement("a", "xfrm", aNs);
+        _writer.WriteStartElement("a", "off", aNs);
+        _writer.WriteAttributeString("x", "0");
+        _writer.WriteAttributeString("y", "0");
+        _writer.WriteEndElement(); // a:off
+        _writer.WriteStartElement("a", "ext", aNs);
+        _writer.WriteAttributeString("cx", widthEmu.ToString());
+        _writer.WriteAttributeString("cy", heightEmu.ToString());
+        _writer.WriteEndElement(); // a:ext
+        _writer.WriteEndElement(); // a:xfrm
+
+        // Geometry: rectangle or ellipse; default rectangle.
+        string prst = shape.Type switch
+        {
+            ShapeType.Ellipse => "ellipse",
+            _ => "rect"
+        };
+        _writer.WriteStartElement("a", "prstGeom", aNs);
+        _writer.WriteAttributeString("prst", prst);
+        _writer.WriteStartElement("a", "avLst", aNs);
+        _writer.WriteEndElement(); // a:avLst
+        _writer.WriteEndElement(); // a:prstGeom
+
+        // Fill color (if any)
+        if (shape.FillColor != 0)
+        {
+            _writer.WriteStartElement("a", "solidFill", aNs);
+            _writer.WriteStartElement("a", "srgbClr", aNs);
+            var fillHex = ColorHelper.ColorToHex(shape.FillColor);
+            if (fillHex == "auto") fillHex = "FFFFFF";
+            _writer.WriteAttributeString("val", fillHex);
+            _writer.WriteEndElement(); // a:srgbClr
+            _writer.WriteEndElement(); // a:solidFill
+        }
+
+        // Line (stroke)
+        _writer.WriteStartElement("a", "ln", aNs);
+        if (shape.LineWidth > 0)
+        {
+            _writer.WriteAttributeString("w", shape.LineWidth.ToString());
+        }
+        _writer.WriteStartElement("a", "solidFill", aNs);
+        _writer.WriteStartElement("a", "srgbClr", aNs);
+        var lineHex = shape.LineColor != 0 ? ColorHelper.ColorToHex(shape.LineColor) : "000000";
+        if (lineHex == "auto") lineHex = "000000";
+        _writer.WriteAttributeString("val", lineHex);
+        _writer.WriteEndElement(); // a:srgbClr
+        _writer.WriteEndElement(); // a:solidFill
+        _writer.WriteEndElement(); // a:ln
+
+        _writer.WriteEndElement(); // wps:spPr
+
+        // Optionally, basic textbox for shape text when available.
+        if (!string.IsNullOrEmpty(shape.Text))
+        {
+            _writer.WriteStartElement("wps", "txbx", wpsNs);
+            _writer.WriteStartElement("w", "txbxContent", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteStartElement("w", "t", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
+            _writer.WriteString(shape.Text);
+            _writer.WriteEndElement(); // w:t
+            _writer.WriteEndElement(); // w:r
+            _writer.WriteEndElement(); // w:p
+            _writer.WriteEndElement(); // w:txbxContent
+            _writer.WriteEndElement(); // wps:txbx
+        }
+
+        _writer.WriteEndElement(); // wps:wsp
+    }
+
+    /// <summary>
     /// Builds a mapping from paragraph index to charts that should be emitted
     /// near that paragraph, based on ChartModel.ParagraphIndexHint. Charts
     /// whose hints are out of range are ignored here and will be handled by
@@ -279,21 +551,26 @@ public class DocumentWriter
 
         foreach (var shape in document.Shapes)
         {
-            if (shape.Type != ShapeType.Picture || shape.ImageIndex is null)
-                continue;
             if (shape.ParagraphIndexHint < 0)
                 continue;
 
-            var imageIndex = shape.ImageIndex.Value;
-            // 如果该图片已经在正文中出现过，则跳过以避免重复。
-            if (!usedImageIndices.Add(imageIndex))
-                continue;
+            // 对于图片形状，我们需要避免重复：如果同一 imageIndex 已经作为正文
+            // 图像出现过，就跳过这个形状；非图片矢量形状不参与去重。
+            if (shape.Type == ShapeType.Picture && shape.ImageIndex is not null)
+            {
+                var imageIndex = shape.ImageIndex.Value;
+                if (!usedImageIndices.Add(imageIndex))
+                {
+                    continue;
+                }
+            }
 
             if (!map.TryGetValue(shape.ParagraphIndexHint, out var list))
             {
                 list = new List<ShapeModel>();
                 map[shape.ParagraphIndexHint] = list;
             }
+
             list.Add(shape);
         }
 
@@ -363,39 +640,49 @@ public class DocumentWriter
     }
 
     /// <summary>
-    /// Writes a single picture shape either as a true floating image (wp:anchor)
-    /// when ShapeAnchor indicates IsFloating, or falls back to inline picture
-    /// using the existing run-based logic.
+    /// Writes a single shape. Picture shapes are rendered either as true
+    /// floating images (wp:anchor) when ShapeAnchor.IsFloating is set, or as
+    /// inline pictures using the existing run-based logic. Non-picture shapes
+    /// (basic OfficeArt vectors and SmartArt fallbacks) are rendered as
+    /// DrawingML wordprocessingShape rectangles with simple fill/line styling.
     /// </summary>
     private void WriteInlinePictureShape(ShapeModel shape, DocumentModel document)
     {
-        if (shape.ImageIndex is null)
-            return;
-
-        var imageIndex = shape.ImageIndex.Value;
-        if (imageIndex < 0 || imageIndex >= document.Images.Count)
-            return;
-
-        // Prefer floating output when we have a valid anchor.
-        if (shape.Anchor is { IsFloating: true })
+        // Picture-backed shapes
+        if (shape.Type == ShapeType.Picture)
         {
-            WriteFloatingPictureShape(shape, document);
+            if (shape.ImageIndex is null)
+                return;
+
+            var imageIndex = shape.ImageIndex.Value;
+            if (imageIndex < 0 || imageIndex >= document.Images.Count)
+                return;
+
+            // Prefer floating output when we have a valid anchor.
+            if (shape.Anchor is { IsFloating: true })
+            {
+                WriteFloatingPictureShape(shape, document);
+                return;
+            }
+
+            // Fallback: inline picture using existing run-based logic.
+            var run = new RunModel
+            {
+                IsPicture = true,
+                ImageIndex = imageIndex,
+                Properties = new RunProperties()
+            };
+
+            _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            WriteRun(run);
+            _writer.WriteEndElement(); // w:r
+            _writer.WriteEndElement(); // w:p
             return;
         }
 
-        // Fallback: inline picture using existing run-based logic.
-        var run = new RunModel
-        {
-            IsPicture = true,
-            ImageIndex = imageIndex,
-            Properties = new RunProperties()
-        };
-
-        _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        WriteRun(run);
-        _writer.WriteEndElement(); // w:r
-        _writer.WriteEndElement(); // w:p
+        // Non-picture vector shapes (complex OfficeArt, SmartArt fallbacks)
+        WriteVectorShape(shape);
     }
     
     /// <summary>
