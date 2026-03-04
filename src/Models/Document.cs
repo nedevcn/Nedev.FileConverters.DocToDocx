@@ -303,6 +303,17 @@ public class ShapeAnchor
 }
 
 /// <summary>
+/// Reference frame used for floating shape positioning.
+/// </summary>
+public enum ShapeRelativeTo
+{
+    Page,
+    Margin,
+    Column,
+    Paragraph
+}
+
+/// <summary>
 /// Run properties (CHP)
 /// </summary>
 public class RunProperties

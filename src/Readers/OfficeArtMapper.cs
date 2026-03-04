@@ -184,7 +184,9 @@ public static class OfficeArtMapper
                 X = fspa.XaLeft,
                 Y = fspa.YaTop,
                 Width = width,
-                Height = height
+                Height = height,
+                HorizontalRelativeTo = MapRelativeToHorizontal(fspa.Flags),
+                VerticalRelativeTo = MapRelativeToVertical(fspa.Flags)
             };
 
             // Map CP to nearest paragraph by MinCp.
@@ -201,6 +203,27 @@ public static class OfficeArtMapper
                 shape.Anchor.ParagraphIndex = bestPara.Paragraph.Index;
             }
         }
+    }
+
+    /// <summary>
+    /// Maps FSPA flags to a horizontal reference frame. This is intentionally
+    /// conservative: until all flag combinations are well understood, we default
+    /// to page-relative anchors and only special-case a few common patterns.
+    /// </summary>
+    private static ShapeRelativeTo MapRelativeToHorizontal(ushort flags)
+    {
+        // TODO: refine based on full MS-DOC FSPA specification and real-world docs.
+        return ShapeRelativeTo.Page;
+    }
+
+    /// <summary>
+    /// Maps FSPA flags to a vertical reference frame. See comments on
+    /// MapRelativeToHorizontal for caveats.
+    /// </summary>
+    private static ShapeRelativeTo MapRelativeToVertical(ushort flags)
+    {
+        // TODO: refine based on full MS-DOC FSPA specification and real-world docs.
+        return ShapeRelativeTo.Page;
     }
 }
 

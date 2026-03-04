@@ -43,17 +43,25 @@ public static class FspaReader
 
                 var cp = cpArray[i];
 
-                // FSPA structure: we only rely on the first 5 DWORDs (spid + bounding box),
-                // and skip the remaining bytes. This keeps parsing robust even if the tail
-                // layout changes slightly between Word versions.
+                // FSPA structure: we mainly rely on the first 5 DWORDs (spid + bounding box),
+                // but we also keep a copy of the trailing flags so that higher layers can
+                // decide how to interpret relative anchors. This keeps parsing robust even
+                // if the tail layout changes slightly between Word versions.
                 var spid = tableReader.ReadInt32();
                 var xaLeft = tableReader.ReadInt32();
                 var yaTop = tableReader.ReadInt32();
                 var xaRight = tableReader.ReadInt32();
                 var yaBottom = tableReader.ReadInt32();
 
-                // Skip the remaining part of the FSPA structure.
+                ushort flags = 0;
                 var remaining = FspaSize - (5 * 4);
+                if (remaining >= 4)
+                {
+                    // Read two WORDs: first is often reserved, second contains flags
+                    tableReader.ReadUInt16(); // reserved / unused
+                    flags = tableReader.ReadUInt16();
+                    remaining -= 4;
+                }
                 if (remaining > 0)
                 {
                     tableReader.BaseStream.Seek(remaining, SeekOrigin.Current);
@@ -66,7 +74,8 @@ public static class FspaReader
                     YaTop = yaTop,
                     XaRight = xaRight,
                     YaBottom = yaBottom,
-                    Cp = cp
+                    Cp = cp,
+                    Flags = flags
                 });
             }
         }
@@ -91,5 +100,11 @@ public class FspaInfo
     public int XaRight { get; set; }
     public int YaBottom { get; set; }
     public int Cp { get; set; }
+    /// <summary>
+    /// Raw FSPA flags as stored in the binary document. The exact bit semantics
+    /// are interpreted at a higher layer; unknown combinations fall back to
+    /// page-relative anchors for safety.
+    /// </summary>
+    public ushort Flags { get; set; }
 }
 

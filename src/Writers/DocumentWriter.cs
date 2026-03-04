@@ -342,15 +342,23 @@ public class DocumentWriter
         _writer.WriteAttributeString("allowOverlap", "1");
 
         // Position
+        string MapRelative(ShapeRelativeTo rel) => rel switch
+        {
+            ShapeRelativeTo.Margin => "margin",
+            ShapeRelativeTo.Column => "column",
+            ShapeRelativeTo.Paragraph => "paragraph",
+            _ => "page"
+        };
+
         _writer.WriteStartElement("wp", "positionH", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-        _writer.WriteAttributeString("relativeFrom", "page");
+        _writer.WriteAttributeString("relativeFrom", MapRelative(anchor.HorizontalRelativeTo));
         _writer.WriteStartElement("wp", "posOffset", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
         _writer.WriteString(xEmu.ToString());
         _writer.WriteEndElement(); // wp:posOffset
         _writer.WriteEndElement(); // wp:positionH
 
         _writer.WriteStartElement("wp", "positionV", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-        _writer.WriteAttributeString("relativeFrom", "page");
+        _writer.WriteAttributeString("relativeFrom", MapRelative(anchor.VerticalRelativeTo));
         _writer.WriteStartElement("wp", "posOffset", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
         _writer.WriteString(yEmu.ToString());
         _writer.WriteEndElement(); // wp:posOffset
