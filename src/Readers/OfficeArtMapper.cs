@@ -134,7 +134,10 @@ public static class OfficeArtMapper
             Type = type,
             Anchor = null,
             ImageIndex = imageIndex,
-            Text = null
+            Text = null,
+            FillColor = 0,
+            LineColor = 0,
+            LineWidth = 0
         };
     }
 

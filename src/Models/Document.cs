@@ -277,6 +277,11 @@ public class ShapeModel
     /// -1 means "no preference / fall back to document-level placement".
     /// </summary>
     public int ParagraphIndexHint { get; set; } = -1;
+
+    // Basic style info for non-picture shapes (OfficeArt vectors).
+    public int FillColor { get; set; }   // ICO or COLORREF, 0 = auto/none
+    public int LineColor { get; set; }   // ICO or COLORREF, 0 = auto/none
+    public int LineWidth { get; set; }   // In twips or similar logical units
 }
 
 public enum ShapeType
