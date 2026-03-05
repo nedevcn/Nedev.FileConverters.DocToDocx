@@ -1570,6 +1570,13 @@ public class DocumentWriter
 
     private void WriteParagraph(ParagraphModel paragraph, bool suppressPageBreakBefore = false)
     {
+        // If this paragraph is actually a wrapper for a nested table, write the table directly
+        if (paragraph.Type == ParagraphType.NestedTable && paragraph.NestedTable != null)
+        {
+            WriteTable(paragraph.NestedTable);
+            return;
+        }
+
         // Filter runs to only those with actual content
         var runsWithContent = paragraph.Runs.Where(r => !string.IsNullOrEmpty(r.Text) || r.IsPicture || r.IsField).ToList();
         
@@ -1717,6 +1724,48 @@ public class DocumentWriter
         {
             _writer.WriteStartElement("w", "outlineLvl", wNs);
             _writer.WriteAttributeString("w", "val", wNs, props.OutlineLevel.ToString());
+            _writer.WriteEndElement();
+        }
+
+        // 12. Text Formatting / Typography Flags
+        if (!props.WordWrap)
+        {
+            _writer.WriteStartElement("w", "wordWrap", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "0");
+            _writer.WriteEndElement();
+        }
+        if (!props.Kinsoku)
+        {
+            _writer.WriteStartElement("w", "kinsoku", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "0");
+            _writer.WriteEndElement();
+        }
+        if (!props.SnapToGrid)
+        {
+            _writer.WriteStartElement("w", "snapToGrid", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "0");
+            _writer.WriteEndElement();
+        }
+        if (!props.AutoSpaceDe)
+        {
+            _writer.WriteStartElement("w", "autoSpaceDE", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "0");
+            _writer.WriteEndElement();
+        }
+        if (!props.AutoSpaceDn)
+        {
+            _writer.WriteStartElement("w", "autoSpaceDN", wNs);
+            _writer.WriteAttributeString("w", "val", wNs, "0");
+            _writer.WriteEndElement();
+        }
+        if (props.TopLinePunct)
+        {
+            _writer.WriteStartElement("w", "topLinePunct", wNs);
+            _writer.WriteEndElement();
+        }
+        if (props.OverflowPunct)
+        {
+            _writer.WriteStartElement("w", "overflowPunct", wNs);
             _writer.WriteEndElement();
         }
         
@@ -2494,6 +2543,22 @@ public class DocumentWriter
         {
             _writer.WriteStartElement("w", "position", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", props.Position.ToString());
+            _writer.WriteEndElement();
+        }
+
+        // 13.5 Character Scale (w)
+        if (props.CharacterScale != 100 && props.CharacterScale > 0)
+        {
+            _writer.WriteStartElement("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", props.CharacterScale.ToString());
+            _writer.WriteEndElement();
+        }
+
+        // 13.6 Snap to Grid
+        if (!props.SnapToGrid)
+        {
+            _writer.WriteStartElement("w", "snapToGrid", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "0");
             _writer.WriteEndElement();
         }
 

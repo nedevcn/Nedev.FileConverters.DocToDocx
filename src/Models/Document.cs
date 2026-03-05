@@ -161,6 +161,9 @@ public class ParagraphModel
     public int TableCellIndex { get; set; } = -1;
     public int NestingLevel { get; set; }
     
+    /// <summary>Set when Type == ParagraphType.NestedTable</summary>
+    public TableModel? NestedTable { get; set; }
+    
     /// <summary>List format ID (ilfo) - 0 if not in a list</summary>
     public int ListFormatId { get; set; }
     
@@ -185,7 +188,8 @@ public enum ParagraphType
     BookmarkEnd,
     Heading,
     PageBreak,
-    SectionBreak
+    SectionBreak,
+    NestedTable
 }
 
 /// <summary>
@@ -260,6 +264,15 @@ public class ParagraphProperties
     public int OutlineLevel { get; set; }
     public NumberFormat? NumberFormat { get; set; }
     public string? NumberText { get; set; }
+    
+    // Phase 1 Additions (Typography & Layout)
+    public bool SnapToGrid { get; set; } = true; // Default true in Word
+    public bool AutoSpaceDe { get; set; } = true; // Adjust space between Asian and Latin text
+    public bool AutoSpaceDn { get; set; } = true; // Adjust space between Asian text and numbers
+    public bool WordWrap { get; set; } = true;
+    public bool Kinsoku { get; set; } = true; // Asian typography rules
+    public bool OverflowPunct { get; set; } // Allow punctuation to extend past margin
+    public bool TopLinePunct { get; set; } // Allow punctuation to start line
 }
 
 public enum ParagraphAlignment
@@ -379,6 +392,12 @@ public class RunProperties
     public bool IsImprint { get; set; }
     public int Kerning { get; set; }
     public int Position { get; set; }
+    public int CharacterScale { get; set; } = 100; // Character scaling in % (sprmCHwcr)
+
+    // Phase 1 Additions (Typography)
+    public bool SnapToGrid { get; set; } = true; // Character level snap to grid (sprmCFIco/sprmCFUsePgsuSettings)
+    // Basic Ruby (Furigana) storage
+    public string? RubyText { get; set; } // Phonics text if this run is ruby
 }
 
 public enum UnderlineType

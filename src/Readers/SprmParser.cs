@@ -160,8 +160,8 @@ public class SprmParser
         var sprmCode = sprm.Code & 0x01FF;
         var sgc = (sprm.Code >> 13) & 0x07;
         
-        // sgc=1 is PAP (Paragraph Properties)
-        if (sgc != 1 && sgc != 2) return;
+        // sgc=1 is PAP (Paragraph Properties), but we also allow specific table-related PAP sprms like sprmPItap (0x6649, sgc=3)
+        if (sgc != 1 && sgc != 2 && sprm.Code != 0x6649 && sprm.Code != 0x2416) return;
 
         switch (sprmCode)
         {
@@ -178,7 +178,9 @@ public class SprmParser
             case 0x12: pap.LineSpacing = (int)(short)(sprm.Operand & 0xFFFF); break; // sprmPDyaLine
             case 0x13: pap.SpaceBefore = (int)(short)sprm.Operand; break; // sprmPDyaBefore
             case 0x14: pap.SpaceAfter = (int)(short)sprm.Operand; break; // sprmPDyaAfter
+            case 0x16: pap.InTable = sprm.Operand != 0; break; // sprmPFInTable (0x2416 -> code 0x16)
             case 0x40: pap.OutlineLevel = (byte)sprm.Operand; break; // sprmPOutlineLvl
+            case 0x49: pap.Itap = (int)(short)sprm.Operand; break; // sprmPItap (0x6649 -> code 0x49)
             case 0x61: pap.Justification = (byte)sprm.Operand; break; // sprmPJc
             // sprmPShd — paragraph shading (SHDOperand or Shd)
             case 0x0C:
@@ -201,7 +203,7 @@ public class SprmParser
             // --- Word 6 (8-bit) SPRM Opcodes (Fallbacks) ---
             case 0x02: pap.StyleId = (ushort)sprm.Operand; break;
             case 0x15: pap.LineSpacing = (int)sprm.Operand; break;
-            case 0x16: pap.SpaceBefore = (int)sprm.Operand; break;
+            // case 0x16: pap.SpaceBefore = (int)sprm.Operand; break; // Conflicts with Word 97 sprmPFInTable
             case 0x17: pap.SpaceAfter = (int)sprm.Operand; break;
         }
     }
@@ -578,6 +580,9 @@ public class PapBase
     public int ListFormatOverrideId { get; set; }
     /// <summary>Paragraph-level shading (background/pattern) when sprmPShd is present.</summary>
     public ShadingInfo? Shading { get; set; }
+    // Nested table info
+    public bool InTable { get; set; }
+    public int Itap { get; set; }
     // Associated table properties (TAP) decoded from the same GRPPRL, when present.
     public TapBase? Tap { get; set; }
 }
