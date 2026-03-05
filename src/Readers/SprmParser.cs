@@ -171,6 +171,14 @@ public class SprmParser
             case 0x40: chp.IsSuperscript = sprm.Operand == 1; chp.IsSubscript = sprm.Operand == 2; break;
             case 0x41: chp.IsDoubleStrikeThrough = sprm.Operand != 0; break;
             case 0x44: chp.CharacterSpacingAdjustment = (int)sprm.Operand; break;
+
+            // --- Revision Marks (Track Changes) ---
+            case 0x00: chp.IsDeleted = sprm.Operand != 0; break;      // sprmCFRMarkDel
+            case 0x04: chp.AuthorIndexDel = (ushort)sprm.Operand; break; // sprmCIBstRMarkDel
+            case 0x05: chp.DateDel = (uint)sprm.Operand; break;      // sprmCDttmRMarkDel
+            case 0x54: chp.IsInserted = sprm.Operand != 0; break;     // sprmCFRMark
+            case 0x63: chp.AuthorIndexIns = (ushort)sprm.Operand; break; // sprmCIBstRMark
+            case 0x64: chp.DateIns = (uint)sprm.Operand; break;      // sprmCDttmRMark
         }
     }
 

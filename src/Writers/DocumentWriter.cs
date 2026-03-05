@@ -2193,7 +2193,13 @@ public class DocumentWriter
             // But for now, skip empty runs to avoid corruption
             return;
         }
-        
+
+        bool isInserted = run.Properties != null && run.Properties.IsInserted;
+        bool isDeleted = run.Properties != null && run.Properties.IsDeleted;
+
+        if (isInserted) WriteTrackChangeStart("ins", run.Properties!);
+        if (isDeleted) WriteTrackChangeStart("del", run.Properties!);
+
         // Handle bookmark start
         if (run.IsBookmark && run.IsBookmarkStart)
         {
@@ -2286,6 +2292,9 @@ public class DocumentWriter
         {
             WriteBookmarkEnd(run.BookmarkName);
         }
+
+        if (isDeleted) _writer.WriteEndElement(); // w:del
+        if (isInserted) _writer.WriteEndElement(); // w:ins
     }
 
     /// <summary>
