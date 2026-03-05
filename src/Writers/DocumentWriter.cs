@@ -1468,14 +1468,29 @@ public class DocumentWriter
             _writer.WriteEndElement(); // w:tcPr
         }
         
-        // Write cell content (paragraphs) only for vertical-merge starting cells.
+        // Write cell content (paragraphs) only for non-vMerge-continue cells.
         // Horizontal-merge covered cells are skipped upstream so we never reach here for them.
-        if (!IsCoveredByVerticalMerge(table, row.Index, cell.ColumnIndex))
+        if (!isVmergeContinue)
         {
-            foreach (var para in cell.Paragraphs)
+            if (cell.Paragraphs.Count > 0)
             {
-                WriteParagraph(para);
+                foreach (var para in cell.Paragraphs)
+                {
+                    WriteParagraph(para);
+                }
             }
+            else
+            {
+                // OOXML requires at least one w:p in every w:tc
+                _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteEndElement();
+            }
+        }
+        else
+        {
+            // vMerge continue cells MUST still have at least one empty w:p per OOXML spec
+            _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
         }
         
         _writer.WriteEndElement(); // w:tc

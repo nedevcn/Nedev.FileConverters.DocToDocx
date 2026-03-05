@@ -462,53 +462,55 @@ public class SprmParser
     }
 
     /// <summary>
-    /// Decodes a Word binary BRC (Border Code) value into a high-level BorderInfo.
-    /// This is a best-effort mapping based on the MS-DOC BRC layout where:
-    ///  - bits 0-4  (5 bits)  = border type
-    ///  - bits 5-8  (4 bits)  = border width
-    ///  - bits 9-15 (7 bits)  = color index (ICO)
-    /// We map these into our BorderStyle/Width/Color fields.
+    /// Decodes a Word binary BRC80 value into a high-level BorderInfo.
+    /// Per MS-DOC section 2.9.16 (Brc80):
+    ///  - bits 0-7   (8 bits) = dptLineWidth (width in 1/8 pt)
+    ///  - bits 8-15  (8 bits) = brcType (border style index)
+    ///  - bits 16-23 (8 bits) = ico (color index)
+    ///  - bits 24-28 (5 bits) = dptSpace (spacing in pt)
+    ///  - bit  29    = fShadow
+    ///  - bit  30    = fFrame
     /// </summary>
     private static BorderInfo DecodeBrc(uint brc)
     {
-        var styleBits = (int)(brc & 0x1F);
-        var widthBits = (int)((brc >> 5) & 0x0F);
-        var colorBits = (int)((brc >> 9) & 0x7F);
+        var dptLineWidth = (int)(brc & 0xFF);         // bits 0-7
+        var brcType      = (int)((brc >> 8) & 0xFF);  // bits 8-15
+        var ico          = (int)((brc >> 16) & 0xFF);  // bits 16-23
+        var dptSpace     = (int)((brc >> 24) & 0x1F);  // bits 24-28
 
-        var style = styleBits switch
+        var style = brcType switch
         {
             0 => BorderStyle.None,
             1 => BorderStyle.Single,
             2 => BorderStyle.Thick,
             3 => BorderStyle.Double,
-            4 => BorderStyle.Dotted,
-            5 => BorderStyle.Dashed,
-            6 => BorderStyle.DotDash,
-            7 => BorderStyle.DotDotDash,
-            8 => BorderStyle.Triple,
-            9 => BorderStyle.ThinThickSmallGap,
-            10 => BorderStyle.ThickThinSmallGap,
-            11 => BorderStyle.ThinThickThinSmallGap,
-            12 => BorderStyle.ThinThickMediumGap,
-            13 => BorderStyle.ThickThinMediumGap,
-            14 => BorderStyle.ThinThickThinMediumGap,
-            15 => BorderStyle.ThinThickLargeGap,
-            16 => BorderStyle.ThickThinLargeGap,
-            17 => BorderStyle.ThinThickThinLargeGap,
-            18 => BorderStyle.Wave,
+            5 => BorderStyle.Dotted,         // hairline
+            6 => BorderStyle.Dashed,
+            7 => BorderStyle.DotDash,
+            8 => BorderStyle.DotDotDash,
+            9 => BorderStyle.Triple,
+            10 => BorderStyle.ThinThickSmallGap,
+            11 => BorderStyle.ThickThinSmallGap,
+            12 => BorderStyle.ThinThickThinSmallGap,
+            13 => BorderStyle.ThinThickMediumGap,
+            14 => BorderStyle.ThickThinMediumGap,
+            15 => BorderStyle.ThinThickThinMediumGap,
+            16 => BorderStyle.ThinThickLargeGap,
+            17 => BorderStyle.ThickThinLargeGap,
+            18 => BorderStyle.ThinThickThinLargeGap,
+            19 => BorderStyle.Wave,
             _ => BorderStyle.Single
         };
 
-        // Width in twips is usually derived from widthBits; we approximate by
-        // mapping the 0-15 range into a 0-96 twip range (compatible with DOCX sz*8).
-        var widthTwips = widthBits * 8;
+        // dptLineWidth is in 1/8 pt; OOXML w:sz is in 1/8 pt, so use directly
+        var widthEighthPt = dptLineWidth;
 
         return new BorderInfo
         {
             Style = style,
-            Width = widthTwips,
-            Color = colorBits,
-            Space = 0
+            Width = widthEighthPt,
+            Color = ico,
+            Space = dptSpace
         };
     }
 

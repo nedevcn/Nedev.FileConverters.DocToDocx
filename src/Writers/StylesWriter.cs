@@ -539,20 +539,32 @@ public class StylesWriter
         // still written at the document level by DocumentWriter.
 
         // Spacing
-        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing > 0)
+        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing != 0)
         {
             _writer.WriteStartElement("w", "spacing", wNs);
             if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
             if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
-            if (props.LineSpacing > 0)
+            if (props.LineSpacing != 0)
             {
-                _writer.WriteAttributeString("w", "line", wNs, props.LineSpacing.ToString());
-                if (props.LineSpacingMultiple > 0)
-                    _writer.WriteAttributeString("w", "lineRule", wNs, props.LineSpacingMultiple == 1 ? "auto" : "exact");
+                int lineVal = props.LineSpacing;
+                string lineRule;
+                if (props.LineSpacingMultiple == 1)
+                {
+                    lineRule = "auto";
+                }
+                else if (lineVal < 0)
+                {
+                    lineVal = Math.Abs(lineVal);
+                    lineRule = "exact";
+                }
                 else
-                    _writer.WriteAttributeString("w", "lineRule", wNs, "auto");
+                {
+                    lineRule = "atLeast";
+                }
+                _writer.WriteAttributeString("w", "line", wNs, lineVal.ToString());
+                _writer.WriteAttributeString("w", "lineRule", wNs, lineRule);
             }
             _writer.WriteEndElement();
         }
