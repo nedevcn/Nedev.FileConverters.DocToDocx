@@ -147,8 +147,14 @@ public class SprmParser
             // --- Word 6 (8-bit) SPRM Opcodes (Fallbacks) ---
             case 0x02: chp.IsBold = sprm.Operand != 0; break;
             case 0x03: chp.IsItalic = sprm.Operand != 0; break;
-            case 0x04: chp.IsStrikeThrough = sprm.Operand != 0; break;
-            case 0x05: chp.IsUnderline = sprm.Operand != 0; break;
+            case 0x04: 
+                if (sprm.Code == 0x4804) chp.AuthorIndexDel = (ushort)sprm.Operand;
+                else chp.IsStrikeThrough = sprm.Operand != 0; 
+                break;
+            case 0x05: 
+                if (sprm.Code == 0x6805) chp.DateDel = (uint)sprm.Operand;
+                else chp.IsUnderline = sprm.Operand != 0; 
+                break;
             case 0x06: chp.IsOutline = sprm.Operand != 0; break;
             case 0x07: chp.IsSmallCaps = sprm.Operand != 0; break;
             case 0x08: chp.IsAllCaps = sprm.Operand != 0; break;
@@ -174,8 +180,7 @@ public class SprmParser
 
             // --- Revision Marks (Track Changes) ---
             case 0x00: chp.IsDeleted = sprm.Operand != 0; break;      // sprmCFRMarkDel
-            case 0x04: chp.AuthorIndexDel = (ushort)sprm.Operand; break; // sprmCIBstRMarkDel
-            case 0x05: chp.DateDel = (uint)sprm.Operand; break;      // sprmCDttmRMarkDel
+            // sprmCIBstRMarkDel and sprmCDttmRMarkDel logic merged into 0x04 and 0x05 cases above
             case 0x54: chp.IsInserted = sprm.Operand != 0; break;     // sprmCFRMark
             case 0x63: chp.AuthorIndexIns = (ushort)sprm.Operand; break; // sprmCIBstRMark
             case 0x64: chp.DateIns = (uint)sprm.Operand; break;      // sprmCDttmRMark

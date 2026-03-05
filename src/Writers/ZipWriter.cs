@@ -138,6 +138,42 @@ public class ZipWriter : IDisposable
             writer.WriteStyles(document);
         });
         
+        // Write word/fontTable.xml and font files
+        var embeddedFonts = document.Styles.Fonts.Where(f => f.EmbeddedData != null && f.EmbeddedData.Length > 0).ToList();
+        if (embeddedFonts.Count > 0)
+        {
+            // Dictionary to map font name to relationship ID for fontTable.xml
+            var fontRelIds = new Dictionary<string, string>();
+            var fontRels = new List<(string rId, string Target)>();
+            
+            for (int i = 0; i < embeddedFonts.Count; i++)
+            {
+                var font = embeddedFonts[i];
+                var rId = $"rId{i + 1}";
+                fontRelIds[font.Name] = rId;
+                
+                // Use .odttf and obfuscate if you want standard Word behavior
+                // Let's use obfuscation as it is safer for compatibility
+                var fontKey = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+                var obfuscatedData = FontObfuscator.ObfuscateFont(font.EmbeddedData, fontKey);
+                
+                string fontFilePath = $"fonts/font{i + 1}.odttf";
+                fontRels.Add((rId, fontFilePath));
+                
+                AddBinaryEntry($"word/{fontFilePath}", obfuscatedData);
+            }
+            
+            // Write word/_rels/fontTable.xml.rels
+            AddXmlEntry("word/_rels/fontTable.xml.rels", w => WritePartRels(w, fontRels));
+
+            // Write word/fontTable.xml
+            AddXmlEntry("word/fontTable.xml", w =>
+            {
+                var writer = new FontTableWriter(w);
+                writer.WriteFontTable(document, fontRelIds);
+            });
+        }
+        
         // Write word/numbering.xml if document has lists
         if (document.Paragraphs.Any(p => p.ListFormatId > 0) || document.NumberingDefinitions.Count > 0)
         {

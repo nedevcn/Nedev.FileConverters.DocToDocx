@@ -198,6 +198,7 @@ public class FontDefinition
     public int Pitch { get; set; }
     public int Type { get; set; }
     public string? AltName { get; set; }
+    public byte[]? EmbeddedData { get; set; }
 }
 
 /// <summary>

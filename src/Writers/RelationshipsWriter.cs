@@ -61,6 +61,12 @@ public class RelationshipsWriter
         // Settings (always present)
         WriteRelationship($"rId{ids.SettingsRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings", "settings.xml");
         
+        // Font table relationship
+        if (ids.FontTableRId > 0)
+        {
+            WriteRelationship($"rId{ids.FontTableRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable", "fontTable.xml");
+        }
+        
         // Theme relationship
         if (ids.ThemeRId > 0)
         {
@@ -167,6 +173,9 @@ public class RelationshipsWriter
         
         ids.SettingsRId = nextId++;
         
+        if (document.Styles.Fonts.Any(f => f.EmbeddedData != null))
+            ids.FontTableRId = nextId++;
+        
         if (!string.IsNullOrEmpty(document.Theme.XmlContent))
             ids.ThemeRId = nextId++;
         
@@ -272,6 +281,7 @@ public class RelationshipsWriter
 public class DocumentRelationshipIds
 {
     public int SettingsRId { get; set; }
+    public int FontTableRId { get; set; }
     public int ThemeRId { get; set; }
     public int FirstImageRId { get; set; }
     public int FirstChartRId { get; set; }
@@ -546,6 +556,8 @@ public class ContentTypesWriter
         WriteDefault("jpeg", "image/jpeg");
         WriteDefault("gif", "image/gif");
         WriteDefault("bmp", "image/bmp");
+        WriteDefault("odttf", "application/vnd.openxmlformats-officedocument.obfuscatedFont");
+        WriteDefault("ttf", "application/x-font-ttf");
         
         // Override types
         WriteOverride("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml");
@@ -558,6 +570,12 @@ public class ContentTypesWriter
         WriteOverride("/word/document.xml", mainType);
         
         WriteOverride("/word/styles.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml");
+        
+        // Font Table
+        if (document.Styles.Fonts.Any(f => f.EmbeddedData != null))
+        {
+            WriteOverride("/word/fontTable.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml");
+        }
         
         // Theme
         if (!string.IsNullOrEmpty(document.Theme.XmlContent))
