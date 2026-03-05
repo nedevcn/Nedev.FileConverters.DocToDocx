@@ -110,6 +110,12 @@ public class RelationshipsWriter
             WriteRelationship($"rId{ids.EndnotesRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes", "endnotes.xml");
         }
         
+        // VBA Project relationship
+        if (ids.VbaProjectRId > 0)
+        {
+            WriteRelationship($"rId{ids.VbaProjectRId}", "http://schemas.microsoft.com/office/2006/relationships/vbaProject", "vbaProject.bin");
+        }
+        
         // Header relationships (up to three: first/odd/even)
         if (ids.HeaderFirstRId > 0)
         {
@@ -181,6 +187,9 @@ public class RelationshipsWriter
         
         if (document.Endnotes.Count > 0)
             ids.EndnotesRId = nextId++;
+        
+        if (document.VbaProject != null)
+            ids.VbaProjectRId = nextId++;
         
         // Header/footer parts: allocate distinct IDs per type if present
         bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst);
@@ -260,6 +269,7 @@ public class DocumentRelationshipIds
     public int NumberingRId { get; set; }
     public int FootnotesRId { get; set; }
     public int EndnotesRId { get; set; }
+    public int VbaProjectRId { get; set; }
     // Aggregate header/footer IDs (kept for backward compatibility)
     public int HeaderRId { get; set; }
     public int FooterRId { get; set; }
@@ -525,8 +535,20 @@ public class ContentTypesWriter
         // Override types
         WriteOverride("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml");
         WriteOverride("/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml");
-        WriteOverride("/word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml");
+
+        // Main document type changes if macro-enabled
+        string mainType = document.VbaProject != null 
+            ? "application/vnd.ms-word.document.macroEnabled.main+xml" 
+            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+        WriteOverride("/word/document.xml", mainType);
+        
         WriteOverride("/word/styles.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml");
+        
+        // VbaProject
+        if (document.VbaProject != null)
+        {
+            WriteOverride("/word/vbaProject.bin", "application/vnd.ms-office.vbaProject");
+        }
         
         
         // Settings (always present)

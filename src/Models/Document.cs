@@ -26,6 +26,7 @@ public class DocumentModel
     public List<AnnotationModel> Annotations { get; set; } = new();
     public List<TextboxModel> Textboxes { get; set; } = new();
     public List<OleObjectModel> OleObjects { get; set; } = new();
+    public byte[]? VbaProject { get; set; }
     public StyleSheet Styles { get; set; } = new();
     public DocumentProperties Properties { get; set; } = new();
     public HeaderFooterInfo HeadersFooters { get; set; } = new();

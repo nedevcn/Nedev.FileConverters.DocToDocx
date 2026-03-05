@@ -156,6 +156,16 @@ public partial class CfbReader : IDisposable
     }
 
     /// <summary>
+    /// Checks if a child storage exists.
+    /// </summary>
+    public bool HasStorage(string name)
+    {
+        if (_directory.Count == 0) return false;
+        var node = FindChild(_directory[0], name);
+        return node != null && node.ObjectType == 1; // 1 = Storage
+    }
+
+    /// <summary>
     /// Gets all immediate children of a storage DirectoryEntry.
     /// </summary>
     public IEnumerable<DirectoryEntry> GetChildren(DirectoryEntry parent)

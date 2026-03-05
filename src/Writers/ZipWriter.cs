@@ -143,6 +143,12 @@ public class ZipWriter : IDisposable
                 writer.WriteNumbering(document);
             });
         }
+
+        // Write word/vbaProject.bin
+        if (document.VbaProject != null)
+        {
+            AddBinaryEntry("word/vbaProject.bin", document.VbaProject);
+        }
         
         // Write word/settings.xml (always present)
         AddXmlEntry("word/settings.xml", w =>

@@ -320,6 +320,9 @@ public class DocReader : IDisposable
             Document.HeadersFooters.Footers = _headerFooterReader.Footers;
         }
 
+        // 11. Extract VBA Macros if present
+        ExtractVbaProject();
+
         IsLoaded = true;
     }
 
@@ -960,6 +963,29 @@ public class DocReader : IDisposable
 
     /// <summary>Gets the CFB reader for diagnostics</summary>
     public CfbReader GetCfbReader() => _cfb!;
+
+    private void ExtractVbaProject()
+    {
+        if (_cfb == null) return;
+
+        try
+        {
+            if (_cfb.HasStorage("Macros"))
+            {
+                var macrosStorage = _cfb.GetStorage("Macros");
+                // Repack the Macros storage into a standalone OLE compound file 
+                // representing vbaProject.bin
+                if (macrosStorage != null)
+                {
+                    Document.VbaProject = Writers.CfbBuilder.RepackStorage(_cfb, macrosStorage);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Failed to extract VBA Macros: {ex.Message}");
+        }
+    }
 
     public void Dispose()
     {
