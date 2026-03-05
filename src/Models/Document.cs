@@ -118,8 +118,8 @@ public class SectionInfo
     public int StartCp { get; set; }
     public int EndCp { get; set; }
     public int StartParagraphIndex { get; set; }
-    public int PageWidth { get; set; } = 11906; // A4
-    public int PageHeight { get; set; } = 16838; // A4
+    public int PageWidth { get; set; } = 12240; // Default US Letter (8.5" in twips), matches DocumentProperties
+    public int PageHeight { get; set; } = 15840; // Default US Letter (11" in twips), matches DocumentProperties
     public int MarginTop { get; set; } = 1440;
     public int MarginBottom { get; set; } = 1440;
     public int MarginLeft { get; set; } = 1440;

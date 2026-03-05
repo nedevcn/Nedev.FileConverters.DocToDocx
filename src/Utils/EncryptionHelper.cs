@@ -34,14 +34,16 @@ public static class EncryptionHelper
         // Read all bytes from the encrypted stream
         var buffer = new byte[4096];
         int bytesRead;
+        long globalOffset = 0;
         
         while ((bytesRead = encryptedStream.Read(buffer, 0, buffer.Length)) > 0)
         {
-            // XOR decrypt each byte
+            // XOR decrypt each byte using global offset for key alignment
             for (int i = 0; i < bytesRead; i++)
             {
-                buffer[i] ^= (byte)(key >> (i % 4) * 8);
+                buffer[i] ^= (byte)(key >> ((int)((globalOffset + i) % 4) * 8));
             }
+            globalOffset += bytesRead;
             
             decryptedStream.Write(buffer, 0, bytesRead);
         }

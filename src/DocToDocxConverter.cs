@@ -130,35 +130,7 @@ public enum ConversionStage
     Error
 }
 
-/// <summary>
-/// Extension methods for the converter
-/// </summary>
-public static class ConverterExtensions
-{
-    /// <summary>
-    /// Creates a DOCX file from a DOC file (extension method)
-    /// </summary>
-    public static void ToDocx(this string inputPath, string outputPath, string? password = null)
-    {
-        DocToDocxConverter.Convert(inputPath, outputPath, password);
-    }
-    
-    /// <summary>
-    /// Creates a DOCX file from a DOC file asynchronously
-    /// </summary>
-    public static async Task ToDocxAsync(this string inputPath, string outputPath, string? password = null, CancellationToken cancellationToken = default)
-    {
-        await DocToDocxConverter.ConvertAsync(inputPath, outputPath, password, cancellationToken);
-    }
-    
-    /// <summary>
-    /// Creates a DOCX file from a DOC file with progress reporting
-    /// </summary>
-    public static void ToDocx(this string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password = null)
-    {
-        DocToDocxConverter.Convert(inputPath, outputPath, progress, password);
-    }
-}
+
 
 /// <summary>
 /// DOCX Writer - Main writer class that orchestrates the output
@@ -167,17 +139,28 @@ public class DocxWriter : IDisposable
 {
     private readonly Stream _outputStream;
     private readonly ZipWriter _zipWriter;
+    private readonly bool _ownsStream;
     
     public DocxWriter(Stream outputStream)
     {
         _outputStream = outputStream;
         _zipWriter = new ZipWriter(outputStream);
+        _ownsStream = false;
     }
     
     public DocxWriter(string outputPath)
     {
         _outputStream = File.Create(outputPath);
-        _zipWriter = new ZipWriter(_outputStream);
+        try
+        {
+            _zipWriter = new ZipWriter(_outputStream);
+        }
+        catch
+        {
+            _outputStream.Dispose();
+            throw;
+        }
+        _ownsStream = true;
     }
     
     /// <summary>
@@ -194,5 +177,9 @@ public class DocxWriter : IDisposable
     public void Dispose()
     {
         _zipWriter?.Dispose();
+        if (_ownsStream)
+        {
+            _outputStream?.Dispose();
+        }
     }
 }
