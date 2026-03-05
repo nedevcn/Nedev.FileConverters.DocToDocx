@@ -5,21 +5,31 @@ namespace Nedev.DocToDocx.Models;
 /// </summary>
 public class TableModel
 {
+    /// <summary>
+    /// Sequential index for this table.  Zero-based and unique among top-level
+    /// tables; nested tables reuse the index of their containing parent table
+    /// when exposed in <see cref="DocumentModel.Tables"/>.
+    /// </summary>
     public int Index { get; set; }
+
+    /// <summary>
+    /// If this table was parsed as a child of another table, this property
+    /// holds the parent table's <see cref="Index"/>.  A null value means the
+    /// table is top-level.
+    /// </summary>
+    public int? ParentTableIndex { get; set; }
+
+    /// <summary>
+    /// Convenience flag for callers.
+    /// </summary>
+    public bool IsNested => ParentTableIndex.HasValue;
+
     public int RowCount { get; set; }
     public int ColumnCount { get; set; }
     public List<TableRowModel> Rows { get; set; } = new();
     public TableProperties? Properties { get; set; }
     public int StartParagraphIndex { get; set; }
     public int EndParagraphIndex { get; set; }
-    
-    /// <summary>
-    /// Current implementation models only top-level tables laid out on the main
-    /// document text stream. Nested tables (a table entirely inside a cell of
-    /// another table) are flattened into multiple top-level TableModel instances
-    /// that share paragraph ranges. This keeps the reader/writer pipeline simple
-    /// but means extremely complex nested layouts may not be reproduced exactly.
-    /// </summary>
 }
 
 /// <summary>

@@ -70,6 +70,9 @@ public class TableReader
                     if (stack.Count > 0)
                     {
                         var parent = stack.Last();
+                        // record parent index for easier navigation later
+                        popped.Table.ParentTableIndex = parent.Table.Index;
+                        
                         // Attach to current cell of parent
                         var nestedPara = new ParagraphModel
                         {
@@ -81,6 +84,8 @@ public class TableReader
                     }
                     else
                     {
+                        // top-level table has no parent
+                        popped.Table.ParentTableIndex = null;
                         topLevelTables.Add(popped.Table);
                     }
                 }
@@ -213,6 +218,7 @@ public class TableReader
                 if (stack.Count > 0)
                 {
                     var parent = stack.Last();
+                    popped.Table.ParentTableIndex = parent.Table.Index;
                     parent.CurrentCellParagraphs.Add(new ParagraphModel
                     {
                         Type = ParagraphType.NestedTable,
@@ -222,18 +228,7 @@ public class TableReader
                 }
                 else
                 {
-                    topLevelTables.Add(popped.Table);
-                }
-            }
-        }
-
-        document.Tables = topLevelTables;
-    }
-
-    private void FlushCurrentCell(TableContext ctx)
-    {
-        if (ctx.CurrentCellParagraphs.Count == 0 && ctx.CellsInCurrentRow.Count > 0)
-        {
+                    popped.Table.ParentTableIndex = null;
             // Empty cell? 
         }
 

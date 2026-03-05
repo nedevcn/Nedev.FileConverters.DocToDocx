@@ -18,15 +18,12 @@ class Program
             return;
         }
 
-        if (args.Length < 2)
-        {
-            Console.WriteLine("Error: Missing required arguments.");
-            PrintUsage();
-            return;
-        }
-
-        string inputPath = args[0];
-        string outputPath = args[1];
+            if (args.Length == 1 && (args[0] == "-v" || args[0] == "--version"))
+            {
+                var ver = typeof(Program).Assembly.GetName().Version;
+                Console.WriteLine($"Version {ver}");
+                return;
+            }
         string? password = null;
 
         // Parse optional password argument

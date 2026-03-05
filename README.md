@@ -6,7 +6,7 @@ A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party
 
 - **Binary `.doc` reader**: Implements core MS‑DOC structures (CFB, FIB, CLX/Piece Table, CHPX/PAPX FKPs, PLCFs).
 - **Rich text & styles**: Fonts, font sizes, bold/italic/underline, colors, highlighting, outline/emboss/shadow, language (`w:lang`), paragraph alignment, spacing, indentation, borders, shading, and numbered/bulleted lists (including many localized formats).
-- **Tables**: Multi‑row/column tables with TAP‑driven layout: row height and exact/at‑least rules, header rows, `cantSplit`, per‑cell width, proper vertical merges (`vMerge restart/continue`), horizontal merges (`gridSpan`), table‑level borders and shading mapped to DOCX. Recent iterations improved usage of TAP metadata (preferred table width, left indent, cell spacing) for more faithful layout under complex merges.
+- **Tables**: Multi‑row/column tables with TAP‑driven layout: row height and exact/at‑least rules, header rows, `cantSplit`, per‑cell width, proper vertical merges (`vMerge restart/continue`), horizontal merges (`gridSpan`), table‑level borders and shading mapped to DOCX. Nested tables are now tracked as child `TableModel` instances with parent indexes, allowing the writer to emit them in place. Recent iterations improved usage of TAP metadata (preferred table width, left indent, cell spacing) for more faithful layout under complex merges.
 - **Sections & page setup**: Multiple sections with page size/orientation, margins, starting page number, and First/Odd/Even headers/footers mapped to separate DOCX parts.
 - **Images**: Extracts embedded images from the `WordDocument` and `Data` streams (PNG/JPEG/GIF/BMP/OfficeArt BLIPs), writes `word/media/*`, generates `w:drawing` with size inferred from image dimensions and auto‑scaled to page width, respects per‑image scale, and attaches basic alt text.
 - **OfficeArt pictures & floating anchors**: Parses Escher/OfficeArt records and FSPA anchors from `PlcSpaMom` to recover picture shapes; maps them to `wp:anchor` floating images positioned relative to the page, falling back to inline images when anchors are unavailable.
@@ -53,3 +53,18 @@ Nedev.DocToDocx.Cli <input.doc> <output.docx> [-p <password>]
 **Options:**
 - `-p`, `--password` The password to open an encrypted DOC file.
 - `-h`, `--help` Show this help message and exit.
+
+
+### Running the tests
+
+The repository now ships with a set of unit and integration tests under `tests/Nedev.DocToDocx.Tests`.
+Sample `.doc`/`.docx` files are included and copied to the test output directory so that
+integration tests can exercise the reader and CLI tool. To run the tests execute:
+
+```bash
+cd tests/Nedev.DocToDocx.Tests
+dotnet test
+```
+
+The new tests verify document writer output, reader loading of a sample document and
+that the CLI can successfully convert it.
