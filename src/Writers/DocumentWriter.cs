@@ -763,7 +763,11 @@ public class DocumentWriter
             {
                 IsPicture = true,
                 ImageIndex = imageIndex,
-                Properties = new RunProperties()
+                Properties = new RunProperties(),
+                CropTop = shape.CropTop,
+                CropBottom = shape.CropBottom,
+                CropLeft = shape.CropLeft,
+                CropRight = shape.CropRight
             };
 
             _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -798,7 +802,6 @@ public class DocumentWriter
 
         // Relationship ID and doc-level image id
         var ids = RelationshipsWriter.ComputeRelationshipIds(_document);
-        var relId = $"rId{ids.FirstImageRId + imageIndex}";
         var imageId = imageIndex + 1;
 
         // Compute size in EMUs, preferring anchor size when available.
@@ -958,8 +961,20 @@ public class DocumentWriter
         // Blip fill
         _writer.WriteStartElement("pic", "blipFill", "http://schemas.openxmlformats.org/drawingml/2006/picture");
         _writer.WriteStartElement("a", "blip", "http://schemas.openxmlformats.org/drawingml/2006/main");
-        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", relId);
+        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", $"rId{ids.FirstImageRId + imageIndex}");
         _writer.WriteEndElement();
+
+        // Cropping
+        if (shape.CropTop != 0 || shape.CropBottom != 0 || shape.CropLeft != 0 || shape.CropRight != 0)
+        {
+            _writer.WriteStartElement("a", "srcRect", "http://schemas.openxmlformats.org/drawingml/2006/main");
+            if (shape.CropTop != 0) _writer.WriteAttributeString("t", ((long)shape.CropTop * 100000 / 65536).ToString());
+            if (shape.CropBottom != 0) _writer.WriteAttributeString("b", ((long)shape.CropBottom * 100000 / 65536).ToString());
+            if (shape.CropLeft != 0) _writer.WriteAttributeString("l", ((long)shape.CropLeft * 100000 / 65536).ToString());
+            if (shape.CropRight != 0) _writer.WriteAttributeString("r", ((long)shape.CropRight * 100000 / 65536).ToString());
+            _writer.WriteEndElement();
+        }
+
         _writer.WriteStartElement("a", "stretch", "http://schemas.openxmlformats.org/drawingml/2006/main");
         _writer.WriteStartElement("a", "fillRect", "http://schemas.openxmlformats.org/drawingml/2006/main");
         _writer.WriteEndElement();
@@ -983,6 +998,20 @@ public class DocumentWriter
         _writer.WriteStartElement("a", "avLst", "http://schemas.openxmlformats.org/drawingml/2006/main");
         _writer.WriteEndElement();
         _writer.WriteEndElement();
+
+        // Line/Border
+        if (shape.IsLineVisible && (shape.LineWidth > 0 || shape.LineColor != 0))
+        {
+            _writer.WriteStartElement("a", "ln", "http://schemas.openxmlformats.org/drawingml/2006/main");
+            if (shape.LineWidth > 0) _writer.WriteAttributeString("w", shape.LineWidth.ToString());
+            _writer.WriteStartElement("a", "solidFill", "http://schemas.openxmlformats.org/drawingml/2006/main");
+            _writer.WriteStartElement("a", "srgbClr", "http://schemas.openxmlformats.org/drawingml/2006/main");
+            _writer.WriteAttributeString("val", ColorHelper.ColorToHex(shape.LineColor == 0 ? 0 : shape.LineColor));
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+            _writer.WriteEndElement(); // a:ln
+        }
+
         _writer.WriteEndElement(); // pic:spPr
 
         _writer.WriteEndElement(); // pic:pic
@@ -2317,7 +2346,6 @@ public class DocumentWriter
         
         // Calculate relationship ID using shared logic
         var ids = RelationshipsWriter.ComputeRelationshipIds(_document);
-        var relId = $"rId{ids.FirstImageRId + run.ImageIndex}";
         
         // Use actual image dimensions or sensible defaults
         var widthEmu = image.WidthEMU > 0 ? image.WidthEMU : 5715000; // Default ~6 inches
@@ -2433,8 +2461,20 @@ public class DocumentWriter
         // Blip fill
         _writer.WriteStartElement("pic", "blipFill", "http://schemas.openxmlformats.org/drawingml/2006/picture");
         _writer.WriteStartElement("a", "blip", "http://schemas.openxmlformats.org/drawingml/2006/main");
-        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", relId);
+        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", $"rId{ids.FirstImageRId + run.ImageIndex}");
         _writer.WriteEndElement();
+        
+        // Cropping
+        if (run.CropTop != 0 || run.CropBottom != 0 || run.CropLeft != 0 || run.CropRight != 0)
+        {
+            _writer.WriteStartElement("a", "srcRect", "http://schemas.openxmlformats.org/drawingml/2006/main");
+            if (run.CropTop != 0) _writer.WriteAttributeString("t", ((long)run.CropTop * 100000 / 65536).ToString());
+            if (run.CropBottom != 0) _writer.WriteAttributeString("b", ((long)run.CropBottom * 100000 / 65536).ToString());
+            if (run.CropLeft != 0) _writer.WriteAttributeString("l", ((long)run.CropLeft * 100000 / 65536).ToString());
+            if (run.CropRight != 0) _writer.WriteAttributeString("r", ((long)run.CropRight * 100000 / 65536).ToString());
+            _writer.WriteEndElement();
+        }
+
         _writer.WriteStartElement("a", "stretch", "http://schemas.openxmlformats.org/drawingml/2006/main");
         _writer.WriteStartElement("a", "fillRect", "http://schemas.openxmlformats.org/drawingml/2006/main");
         _writer.WriteEndElement();

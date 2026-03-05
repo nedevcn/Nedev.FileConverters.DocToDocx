@@ -14,8 +14,6 @@ public class ZipWriter : IDisposable
 {
     private readonly Stream _outputStream;
     private readonly ZipArchive _archive;
-    private readonly List<ZipEntry> _entries = new();
-    private int _entryIndex = 0;
     
     public ZipWriter(Stream outputStream)
     {
@@ -436,18 +434,15 @@ public class ManualZipWriter : IDisposable
 {
     private readonly Stream _outputStream;
     private readonly List<LocalFileHeader> _entries = new();
-    private long _baseOffset;
     
     public ManualZipWriter(string outputPath)
     {
         _outputStream = File.Create(outputPath);
-        _baseOffset = 0;
     }
     
     public ManualZipWriter(Stream outputStream)
     {
         _outputStream = outputStream;
-        _baseOffset = 0;
     }
     
     /// <summary>

@@ -254,6 +254,12 @@ public class RunModel
 
     /// <summary>Is this a bookmark start (vs. end)</summary>
     public bool IsBookmarkStart { get; set; }
+
+    // Enhanced properties for cropping (16.16 fixed-point)
+    public int CropTop { get; set; }
+    public int CropBottom { get; set; }
+    public int CropLeft { get; set; }
+    public int CropRight { get; set; }
 }
 
 /// <summary>
@@ -322,15 +328,21 @@ public class ShapeModel
     /// </summary>
     public int ParagraphIndexHint { get; set; } = -1;
 
-    // Basic style info for non-picture shapes (OfficeArt vectors).
-    public int FillColor { get; set; }   // ICO or COLORREF, 0 = auto/none
-    public int LineColor { get; set; }   // ICO or COLORREF, 0 = auto/none
-    public int LineWidth { get; set; }   // In twips or similar logical units
-
     /// <summary>
     /// Vertices for non-rectangular text wrapping (wp:wrapPolygon).
     /// </summary>
     public List<System.Drawing.Point>? WrapPolygonVertices { get; set; }
+
+    public int FillColor { get; set; }   // ICO or COLORREF, 0 = auto/none
+    public int LineColor { get; set; }   // COLORREF
+    public int LineWidth { get; set; }   // In EMUs or twips
+    public bool IsLineVisible { get; set; } = true;
+
+    // Enhanced properties for cropping (16.16 fixed-point, 0 = 0%, 65536 = 100%)
+    public int CropTop { get; set; }
+    public int CropBottom { get; set; }
+    public int CropLeft { get; set; }
+    public int CropRight { get; set; }
 }
 
 public enum ShapeType

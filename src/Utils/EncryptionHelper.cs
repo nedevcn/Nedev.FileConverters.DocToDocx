@@ -74,7 +74,7 @@ public static class EncryptionHelper
         var buffer = new byte[1024];
         var originalPosition = stream.Position;
         
-        stream.Read(buffer, 0, Math.Min(buffer.Length, (int)(stream.Length - stream.Position)));
+        _ = stream.Read(buffer, 0, Math.Min(buffer.Length, (int)(stream.Length - stream.Position)));
         stream.Position = originalPosition;
         
         // Check for common Word document magic numbers

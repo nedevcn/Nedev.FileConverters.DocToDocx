@@ -101,6 +101,7 @@ public static class OfficeArtMapper
     /// </summary>
     private static ShapeModel? CreateShapeFromSpContainer(EscherRecord spContainer, DocumentModel document, ref int imageIndexCursor)
     {
+        ShapeModel? shape = null;
         int? shapeId = null;
         ShapeType mappedType = ShapeType.Unknown;
 
@@ -110,50 +111,77 @@ public static class OfficeArtMapper
             {
                 shapeId = BitConverter.ToInt32(child.Data, 0);
                 mappedType = MapMsosptToShapeType(child.Instance);
-                break;
+            }
+            else if (child.Type == 0xF00B) // RecordTypeOpt
+            {
+                // We'll parse properties from the OPT record later if we have a shape.
             }
         }
 
-        if (shapeId == null)
-        {
-            return null;
-        }
+        if (shapeId == null) return null;
 
-        // 启发式：当 MSOSPT 表明是图片框 (PictureFrame) 时，尝试与下一个
-        // ImageModel 绑定；否则按矢量形状（矩形/椭圆/文本框等）处理。对于
-        // 未知类型，如果还有未消费的 ImageModel，则维持之前的回退行为：
-        // 把它当成 Picture 以最大化兼容性。
-        ShapeType type = mappedType;
         int? imageIndex = null;
-
-        // Picture frame shapes get first chance to claim an image.
-        if (mappedType == ShapeType.Picture &&
-            imageIndexCursor >= 0 && imageIndexCursor < document.Images.Count)
+        if (mappedType == ShapeType.Picture && imageIndexCursor < document.Images.Count)
         {
-            type = ShapeType.Picture;
-            imageIndex = imageIndexCursor;
-            imageIndexCursor++;
+            imageIndex = imageIndexCursor++;
         }
-        // Fallback for unknown types to keep previous behavior for legacy docs.
-        else if (mappedType == ShapeType.Unknown &&
-                 imageIndexCursor >= 0 && imageIndexCursor < document.Images.Count)
+        else if (mappedType == ShapeType.Unknown && imageIndexCursor < document.Images.Count)
         {
-            type = ShapeType.Picture;
-            imageIndex = imageIndexCursor;
-            imageIndexCursor++;
+            mappedType = ShapeType.Picture;
+            imageIndex = imageIndexCursor++;
         }
 
-        return new ShapeModel
+        shape = new ShapeModel
         {
             Id = shapeId.Value,
-            Type = type,
-            Anchor = null,
+            Type = mappedType,
             ImageIndex = imageIndex,
-            Text = null,
-            FillColor = 0,
-            LineColor = 0,
-            LineWidth = 0
+            IsLineVisible = true
         };
+
+        // Parse OPT properties if present
+        var opt = spContainer.Children.FirstOrDefault(c => c.Type == 0xF00B);
+        if (opt != null)
+        {
+            ParseOptProperties(opt.Data, shape);
+        }
+
+        return shape;
+    }
+
+    private static void ParseOptProperties(byte[] data, ShapeModel shape)
+    {
+        // MS-ODRAW 2.1.1: OfficeArtOPT record
+        // Each property is 6 bytes: 2 bytes ID (with flags) + 4 bytes value
+        int pos = 0;
+        int count = data.Length / 6;
+
+        for (int i = 0; i < count; i++)
+        {
+            ushort propIdWithFlags = BitConverter.ToUInt16(data, pos);
+            uint propValue = BitConverter.ToUInt32(data, pos + 2);
+            pos += 6;
+
+            ushort propId = (ushort)(propIdWithFlags & 0x3FFF);
+            bool fComplex = (propIdWithFlags & 0x8000) != 0;
+
+            switch (propId)
+            {
+                // Cropping (16.16 fixed point)
+                case 257: shape.CropTop = (int)propValue; break;
+                case 258: shape.CropBottom = (int)propValue; break;
+                case 259: shape.CropLeft = (int)propValue; break;
+                case 260: shape.CropRight = (int)propValue; break;
+
+                // Line properties
+                case 448: shape.LineColor = (int)propValue; break;
+                case 459: shape.LineWidth = (int)propValue; break;
+                case 511: shape.IsLineVisible = (propValue & 0x01) != 0; break;
+
+                // Fill properties
+                case 384: shape.FillColor = (int)propValue; break;
+            }
+        }
     }
 
     /// <summary>

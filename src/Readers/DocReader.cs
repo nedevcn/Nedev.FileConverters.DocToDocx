@@ -283,19 +283,17 @@ public class DocReader : IDisposable
         // Step 6: Extract images
         _imageReader!.ExtractImages(Document);
 
+        // Step 6.1: Scan for additional OLE objects in ObjectPool
+        ScanObjectPool(Document);
+
         // Step 6.5: Parse OfficeArt/Escher shapes and map basic anchors
         if (_officeArtReader != null)
         {
             OfficeArtMapper.AttachShapes(Document, _officeArtReader, _fspaAnchors);
         }
 
-        // Step 6.6: Best-effort chart detection. We recognise streams whose
-        // names contain "Chart" in the OLE container and attach ChartModel
-        // instances. A lightweight heuristic then tries to recover real
-        // category/value data from the embedded stream; when that fails we
-        // fall back to placeholder data so the resulting chart remains
-        // editable in Word.
-        AttachPlaceholderCharts();
+        // Step 6.6: Best-effort chart detection
+        IdentifyCharts();
 
         // Step 7: Read footnotes
         if (_footnoteReader != null)
@@ -340,7 +338,67 @@ public class DocReader : IDisposable
     /// in the resulting DOCX even when we do not yet understand the underlying
     /// binary chart format.
     /// </summary>
-    private void AttachPlaceholderCharts()
+    /// <summary>Iterates through ObjectPool storage to extract embedded OLE objects.</summary>
+    private void ScanObjectPool(DocumentModel document)
+    {
+        if (_cfb == null || !_cfb.HasStorage("ObjectPool")) return;
+
+        try
+        {
+            var opStorage = _cfb.GetStorage("ObjectPool");
+            if (opStorage == null) return;
+
+            var children = _cfb.GetChildren(opStorage);
+            foreach (var child in children)
+            {
+                if (child.ObjectType != 1) continue; // OBJ_STORAGE
+
+                var objectId = child.Name;
+                if (!document.OleObjects.Any(o => o.ObjectId == objectId))
+                {
+                    try
+                    {
+                        var oleData = Writers.CfbBuilder.RepackStorage(_cfb, child);
+                        var progId = ExtractProgIdFromOleStorage(child);
+
+                        var oleObj = new OleObjectModel
+                        {
+                            ObjectId = objectId,
+                            ProgId = progId ?? "Unknown",
+                            ObjectData = oleData
+                        };
+                        document.OleObjects.Add(oleObj);
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+    }
+
+    private string? ExtractProgIdFromOleStorage(DirectoryEntry storage)
+    {
+        if (_cfb == null) return null;
+        var children = _cfb.GetChildren(storage);
+        
+        // Try \x03ObjInfo first (standard OLE storage)
+        var objInfoEntry = children.FirstOrDefault(c => c.Name == "\x03ObjInfo");
+        if (objInfoEntry != null)
+        {
+            _ = _cfb.GetStreamBytes(objInfoEntry);
+        }
+
+        // Check for common stream names that hint at ProgID
+        if (children.Any(c => c.Name == "WordDocument")) return "Word.Document.8";
+        if (children.Any(c => c.Name == "Workbook")) return "Excel.Sheet.8";
+        if (children.Any(c => c.Name == "PowerPoint Document")) return "PowerPoint.Show.8";
+        if (children.Any(c => c.Name == "Equation Native" || c.Name == "\x02OlePres000")) return "Equation.3";
+        if (children.Any(c => c.Name == "Package")) return "Package";
+
+        return null;
+    }
+
+    private void IdentifyCharts()
     {
         if (_cfb == null) return;
 
@@ -1599,9 +1657,7 @@ public class ImageReader
         return false;
     }
 
-    /// <summary>
-    /// Scans for OfficeArt container records.
-    /// </summary>
+
     private void ScanForOfficeArtRecords(byte[] buffer, List<ImageModel> images, HashSet<(int start, int end)>? skipRanges = null)
     {
         // OfficeArt record header format:

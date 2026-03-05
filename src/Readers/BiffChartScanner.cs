@@ -52,6 +52,7 @@ public static class BiffChartScanner
     {
         var cells = new Dictionary<(int r, int c), double>();
         var strings = new Dictionary<(int r, int c), string>();
+        var sst = new List<string>();
         
         using var ms = new MemoryStream(biffBytes);
         using var reader = new BinaryReader(ms);
@@ -67,7 +68,23 @@ public static class BiffChartScanner
                 
                 long nextPos = ms.Position + length;
 
-                if (id == 0x0203) // NUMBER
+                if (id == 0x00FC) // SST
+                {
+                    ParseSst(reader, length, sst);
+                }
+                else if (id == 0x00FD) // LABELSST
+                {
+                    if (length >= 10)
+                    {
+                        int row = reader.ReadUInt16();
+                        int col = reader.ReadUInt16();
+                        reader.ReadUInt16(); // xf
+                        uint sstIndex = reader.ReadUInt32();
+                        if (sstIndex < sst.Count)
+                            strings[(row, col)] = sst[(int)sstIndex];
+                    }
+                }
+                else if (id == 0x0203) // NUMBER
                 {
                     if (length >= 14)
                     {
@@ -97,16 +114,18 @@ public static class BiffChartScanner
                         int col = reader.ReadUInt16();
                         reader.ReadUInt16(); // xf
                         ushort strLen = reader.ReadUInt16();
-                        int readLen = Math.Min((int)strLen, length - 8);
-                        if (readLen > 0)
+                        // Extract string - simplified
+                        if (length > 8)
                         {
-                            byte[] strBytes = reader.ReadBytes(readLen);
-                            strings[(row, col)] = Encoding.Default.GetString(strBytes);
+                            byte flag = reader.ReadByte();
+                            bool isUnicode = (flag & 0x01) != 0;
+                            if (isUnicode)
+                                strings[(row, col)] = Encoding.Unicode.GetString(reader.ReadBytes(Math.Min(strLen * 2, length - 9)));
+                            else
+                                strings[(row, col)] = Encoding.Default.GetString(reader.ReadBytes(Math.Min((int)strLen, length - 9)));
                         }
                     }
                 }
-                // (Note: ignoring LABELSST / SST for extreme lightweight parsing;
-                // chart labels will fallback to default "Category N" if strings are absent)
                 
                 ms.Position = nextPos;
             }
@@ -163,6 +182,36 @@ public static class BiffChartScanner
             model.Categories = categories;
             model.Series = seriesList;
         }
+    }
+
+    private static void ParseSst(BinaryReader reader, int length, List<string> sst)
+    {
+        try
+        {
+            uint totalUnique = reader.ReadUInt32();
+            for (int i = 0; i < totalUnique; i++)
+            {
+                if (reader.BaseStream.Position >= reader.BaseStream.Length) break;
+                ushort charLen = reader.ReadUInt16();
+                byte flag = reader.ReadByte();
+                bool isUnicode = (flag & 0x01) != 0;
+                
+                string s;
+                if (isUnicode)
+                    s = Encoding.Unicode.GetString(reader.ReadBytes(charLen * 2));
+                else
+                    s = Encoding.Default.GetString(reader.ReadBytes(charLen));
+                
+                sst.Add(s);
+                
+                // Skip formatting runs and phonetic data if any
+                bool hasFormattingRuns = (flag & 0x08) != 0;
+                bool hasPhoneticData = (flag & 0x04) != 0;
+                if (hasFormattingRuns) reader.ReadBytes(reader.ReadUInt16() * 4);
+                if (hasPhoneticData) reader.ReadBytes((int)reader.ReadUInt32());
+            }
+        }
+        catch { }
     }
 
     /// <summary>
