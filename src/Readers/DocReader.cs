@@ -489,6 +489,9 @@ public class DocReader : IDisposable
         var runs = new List<RunModel>();
         if (string.IsNullOrEmpty(paraText)) return runs;
 
+        string? activeEmbedProgId = null;
+        string? activeOleObjectId = null;
+
         var runStart = 0;
         ChpBase? currentChp = null;
 
@@ -524,19 +527,59 @@ public class DocReader : IDisposable
                         Properties = runProps
                     };
 
-                    // Check for field characters (0x13 = field begin, 0x14 = separator, 0x15 = end)
+                    run.FcPic = currentChp?.FcPic ?? 0;
+
+                    // Look ahead in paraText for field code if this run has field start
                     if (runText.Contains('\x13'))
                     {
                         run.IsField = true;
-                        var fieldStart = runText.IndexOf('\x13');
-                        var fieldSep = runText.IndexOf('\x14');
-                        if (fieldStart >= 0 && fieldSep > fieldStart)
+                        var fieldStartPara = paraText.IndexOf('\x13', runStart);
+                        var fieldSepPara = paraText.IndexOf('\x14', fieldStartPara);
+                        if (fieldStartPara >= 0 && fieldSepPara > fieldStartPara)
                         {
-                            run.FieldCode = runText.Substring(fieldStart + 1, fieldSep - fieldStart - 1).Trim();
+                            run.FieldCode = paraText.Substring(fieldStartPara + 1, fieldSepPara - fieldStartPara - 1).Trim();
+                            
+                            if (_fieldReader != null)
+                            {
+                                var parsedField = _fieldReader.ParseField(run.FieldCode);
+                                if (parsedField != null && parsedField.Type == FieldType.Embed)
+                                {
+                                    activeEmbedProgId = parsedField.Arguments;
+                                }
+                            }
                         }
+                    }
 
-                        // Try to interpret hyperlink fields as true OOXML hyperlinks
-                        if (!string.IsNullOrEmpty(run.FieldCode) && _fieldReader != null && _hyperlinkReader != null)
+                    // Check if this run contains the field separator \x14 which holds the OLE Object ID in FcPic
+                    if (runText.Contains('\x14') && run.FcPic != 0 && activeEmbedProgId != null)
+                    {
+                        activeOleObjectId = $"_{run.FcPic}";
+                        if (_cfb != null)
+                        {
+                            var storage = _cfb.GetStorage($"ObjectPool/{activeOleObjectId}");
+                            if (storage != null && !Document.OleObjects.Any(o => o.ObjectId == activeOleObjectId))
+                            {
+                                try
+                                {
+                                    byte[] oleData = Writers.CfbBuilder.RepackStorage(_cfb, storage);
+                                    var oleObj = new OleObjectModel
+                                    {
+                                        ObjectId = activeOleObjectId,
+                                        ProgId = activeEmbedProgId,
+                                        ObjectData = oleData
+                                    };
+                                    Document.OleObjects.Add(oleObj);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Warning: Failed to extract OLE object {activeOleObjectId}: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+
+                    // Try to interpret hyperlink fields as true OOXML hyperlinks (requires field code parsed above)
+                    if (!string.IsNullOrEmpty(run.FieldCode) && _fieldReader != null && _hyperlinkReader != null)
                         {
                             var field = _fieldReader.ParseField(run.FieldCode);
                             if (field != null && field.Type == FieldType.Hyperlink)
@@ -561,13 +604,25 @@ public class DocReader : IDisposable
                                 }
                             }
                         }
-                    }
 
                     if (isPicture)
                     {
                         run.IsPicture = true;
                         run.ImageIndex = imageCounter++;
-                        run.FcPic = currentChp?.FcPic ?? 0;
+                        
+                        if (activeOleObjectId != null && activeEmbedProgId != null)
+                        {
+                            run.IsOle = true;
+                            run.OleObjectId = activeOleObjectId;
+                            run.OleProgId = activeEmbedProgId;
+                        }
+                    }
+
+                    if (runText.Contains('\x15'))
+                    {
+                        // Field end
+                        activeEmbedProgId = null;
+                        activeOleObjectId = null;
                     }
 
                     runs.Add(run);

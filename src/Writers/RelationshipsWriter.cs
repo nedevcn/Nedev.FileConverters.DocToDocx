@@ -80,6 +80,18 @@ public class RelationshipsWriter
             }
         }
         
+        // OLE relationships
+        if (document.OleObjects.Count > 0 && ids.FirstOleRId > 0)
+        {
+            for (int i = 0; i < document.OleObjects.Count; i++)
+            {
+                WriteRelationship(
+                    $"rId{ids.FirstOleRId + i}",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject",
+                    $"embeddings/oleObject{i + 1}.bin");
+            }
+        }
+        
         // Numbering relationship
         if (ids.NumberingRId > 0)
         {
@@ -152,6 +164,12 @@ public class RelationshipsWriter
         {
             ids.FirstChartRId = nextId;
             nextId += document.Charts.Count;
+        }
+        
+        if (document.OleObjects.Count > 0)
+        {
+            ids.FirstOleRId = nextId;
+            nextId += document.OleObjects.Count;
         }
         
         bool hasNumbering = document.Paragraphs.Any(p => p.ListFormatId > 0) || document.NumberingDefinitions.Count > 0;
@@ -238,6 +256,7 @@ public class DocumentRelationshipIds
     public int SettingsRId { get; set; }
     public int FirstImageRId { get; set; }
     public int FirstChartRId { get; set; }
+    public int FirstOleRId { get; set; }
     public int NumberingRId { get; set; }
     public int FootnotesRId { get; set; }
     public int EndnotesRId { get; set; }
@@ -496,6 +515,7 @@ public class ContentTypesWriter
         // Default types
         WriteDefault("xml", "application/xml");
         WriteDefault("rels", "application/vnd.openxmlformats-package.relationships+xml");
+        WriteDefault("bin", "application/vnd.openxmlformats-officedocument.oleObject");
         WriteDefault("png", "image/png");
         WriteDefault("jpg", "image/jpeg");
         WriteDefault("jpeg", "image/jpeg");

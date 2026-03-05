@@ -189,6 +189,19 @@ public class ZipWriter : IDisposable
         {
             WriteCharts(document);
         }
+
+        // Write OLE Objects
+        if (document.OleObjects.Count > 0)
+        {
+            for (int i = 0; i < document.OleObjects.Count; i++)
+            {
+                var ole = document.OleObjects[i];
+                if (ole.ObjectData != null && ole.ObjectData.Length > 0)
+                {
+                    AddBinaryEntry($"word/embeddings/oleObject{i + 1}.bin", ole.ObjectData);
+                }
+            }
+        }
     }
     
     /// <summary>

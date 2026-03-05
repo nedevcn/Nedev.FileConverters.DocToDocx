@@ -117,6 +117,75 @@ public partial class CfbReader : IDisposable
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// Gets a DirectoryEntry by looking up a path like "ObjectPool/_12345678".
+    /// </summary>
+    public DirectoryEntry? GetStorage(string path)
+    {
+        if (_directory.Count == 0) return null;
+        var parts = path.Split('/');
+        var current = _directory[0]; // Root
+
+        foreach (var part in parts)
+        {
+            current = FindChild(current, part);
+            if (current == null) return null;
+        }
+
+        return current;
+    }
+
+    private DirectoryEntry? FindChild(DirectoryEntry parent, string name)
+    {
+        if (parent.ChildSid == NOSTREAM) return null;
+        return FindNode(parent.ChildSid, name);
+    }
+
+    private DirectoryEntry? FindNode(uint sid, string name)
+    {
+        if (sid == NOSTREAM || sid >= _directory.Count) return null;
+        var node = _directory[(int)sid];
+        
+        // CFB strings are case-insensitive
+        if (string.Equals(name, node.Name, StringComparison.OrdinalIgnoreCase)) return node;
+        
+        var left = FindNode(node.LeftChildSid, name);
+        if (left != null) return left;
+        
+        return FindNode(node.RightChildSid, name);
+    }
+
+    /// <summary>
+    /// Gets all immediate children of a storage DirectoryEntry.
+    /// </summary>
+    public IEnumerable<DirectoryEntry> GetChildren(DirectoryEntry parent)
+    {
+        var children = new List<DirectoryEntry>();
+        if (parent.ChildSid != NOSTREAM)
+        {
+            CollectNodes(parent.ChildSid, children);
+        }
+        return children;
+    }
+
+    private void CollectNodes(uint sid, List<DirectoryEntry> nodes)
+    {
+        if (sid == NOSTREAM || sid >= _directory.Count) return;
+        var node = _directory[(int)sid];
+        nodes.Add(node);
+        CollectNodes(node.LeftChildSid, nodes);
+        CollectNodes(node.RightChildSid, nodes);
+    }
+
+    /// <summary>
+    /// Extracts a stream as a byte array given its DirectoryEntry.
+    /// </summary>
+    public byte[] GetStreamBytes(DirectoryEntry entry)
+    {
+        using var ms = ReadStream(entry);
+        return ms.ToArray();
+    }
+
     // ─── Private: Full parse pipeline ───────────────────────────────
 
     private void Parse()

@@ -12,13 +12,10 @@ public class DocumentWriter
     private readonly XmlWriter _writer;
     private int _runId = 0;
     private int _trackChangeId = 1;
-    private int _trackChangeId = 1;
     private DocumentModel? _document;
     private DocumentRelationshipIds? _relationshipIds;
     private readonly Dictionary<string, int> _bookmarkIds = new(StringComparer.Ordinal);
     private int _bookmarkCounter = 0;
-    private System.Collections.Generic.HashSet<string> _startedComments = new();
-    private System.Collections.Generic.HashSet<string> _endedComments = new();
     private HashSet<string> _startedComments = new();
     private HashSet<string> _endedComments = new();
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>
@@ -1936,7 +1933,14 @@ public class DocumentWriter
 
             if (run.IsPicture && run.ImageIndex >= 0)
             {
-                WritePicture(run);
+                if (run.IsOle && !string.IsNullOrEmpty(run.OleObjectId) && !string.IsNullOrEmpty(run.OleProgId))
+                {
+                    WriteOleObject(run);
+                }
+                else
+                {
+                    WritePicture(run);
+                }
                 _writer.WriteEndElement(); // w:r
             }
             else if (run.IsField)
@@ -2069,6 +2073,67 @@ public class DocumentWriter
         _writer.WriteStartElement("w", "bookmarkEnd", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         _writer.WriteAttributeString("w", "id", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", id.ToString());
         _writer.WriteEndElement();
+    }
+
+    /// <summary>
+    /// Writes an OLE object element (w:object).
+    /// </summary>
+    private void WriteOleObject(RunModel run)
+    {
+        if (_document == null || _relationshipIds == null) return;
+        var oleObj = _document.OleObjects.FirstOrDefault(o => o.ObjectId == run.OleObjectId);
+        if (oleObj == null || oleObj.ObjectData.Length == 0) 
+        {
+            // Fallback to normal picture if OLE extraction failed
+            WritePicture(run);
+            return;
+        }
+
+        int oleIndex = _document.OleObjects.IndexOf(oleObj);
+        string oleRelId = $"rId{_relationshipIds.FirstOleRId + oleIndex}";
+        
+        _writer.WriteStartElement("w", "object", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+
+        // Write v:shape with v:imagedata (fallback preview)
+        // For OLE embedding, Office uses legacy VML rather than DrawingML
+        int imageId = run.ImageIndex + 1;
+        var imageRelId = $"rId{_relationshipIds.FirstImageRId + run.ImageIndex}";
+        var image = _document.Images[run.ImageIndex];
+        
+        // VML shape dimensions (1 pt = 12700 EMUs)
+        var widthPt = (image.WidthEMU > 0 ? image.WidthEMU : 5715000) / 12700.0;
+        var heightPt = (image.HeightEMU > 0 ? image.HeightEMU : 3810000) / 12700.0;
+        
+        // Respect per-image scale factors
+        if (image.ScaleX > 0 && image.ScaleX != 100000)
+            widthPt *= (image.ScaleX / 100000.0);
+        if (image.ScaleY > 0 && image.ScaleY != 100000)
+            heightPt *= (image.ScaleY / 100000.0);
+        
+        var shapeId = "_x0000_i" + (1024 + imageId);
+
+        _writer.WriteStartElement("v", "shape", "urn:schemas-microsoft-com:vml");
+        _writer.WriteAttributeString("id", shapeId);
+        _writer.WriteAttributeString("style", string.Format(System.Globalization.CultureInfo.InvariantCulture, "width:{0:F1}pt;height:{1:F1}pt", widthPt, heightPt));
+        
+        _writer.WriteStartElement("v", "imagedata", "urn:schemas-microsoft-com:vml");
+        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", imageRelId);
+        _writer.WriteAttributeString("o", "title", "urn:schemas-microsoft-com:office:office", "");
+        _writer.WriteEndElement(); // v:imagedata
+        
+        _writer.WriteEndElement(); // v:shape
+        
+        // OLEObject element
+        _writer.WriteStartElement("o", "OLEObject", "urn:schemas-microsoft-com:office:office");
+        _writer.WriteAttributeString("Type", "Embed");
+        _writer.WriteAttributeString("ProgID", run.OleProgId!);
+        _writer.WriteAttributeString("ShapeID", shapeId);
+        _writer.WriteAttributeString("DrawAspect", "Content");
+        _writer.WriteAttributeString("ObjectID", oleObj.ObjectId);
+        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", oleRelId);
+        _writer.WriteEndElement(); // o:OLEObject
+
+        _writer.WriteEndElement(); // w:object
     }
 
     /// <summary>

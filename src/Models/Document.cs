@@ -25,6 +25,7 @@ public class DocumentModel
     public List<EndnoteModel> Endnotes { get; set; } = new();
     public List<AnnotationModel> Annotations { get; set; } = new();
     public List<TextboxModel> Textboxes { get; set; } = new();
+    public List<OleObjectModel> OleObjects { get; set; } = new();
     public StyleSheet Styles { get; set; } = new();
     public DocumentProperties Properties { get; set; } = new();
     public HeaderFooterInfo HeadersFooters { get; set; } = new();
@@ -215,6 +216,15 @@ public class RunModel
 
     /// <summary>Image relationship ID for DOCX</summary>
     public string? ImageRelationshipId { get; set; }
+
+    /// <summary>Is this run an OLE object preview</summary>
+    public bool IsOle { get; set; }
+
+    /// <summary>OLE Object ID (matches ObjectId in OleObjectModel)</summary>
+    public string? OleObjectId { get; set; }
+
+    /// <summary>OLE Program ID (e.g. Excel.Sheet.8)</summary>
+    public string? OleProgId { get; set; }
 
     /// <summary>Is this run a hyperlink</summary>
     public bool IsHyperlink { get; set; }
