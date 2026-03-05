@@ -232,6 +232,7 @@ public class StyleReader
         try
         {
             ReadStsh();
+            ResolveStyleInheritance();
         }
         catch (Exception ex)
         {
@@ -474,6 +475,62 @@ public class StyleReader
         _tableReader.BaseStream.Seek(entryEnd, SeekOrigin.Begin);
 
         return style;
+    }
+
+    /// <summary>
+    /// Recursively resolves style inheritance by merging properties from base styles.
+    /// </summary>
+    private void ResolveStyleInheritance()
+    {
+        var resolved = new HashSet<ushort>();
+
+        foreach (var style in Styles.Styles)
+        {
+            ResolveStyle(style, resolved, new HashSet<ushort>());
+        }
+    }
+
+    private void ResolveStyle(StyleDefinition style, HashSet<ushort> resolved, HashSet<ushort> visiting)
+    {
+        if (resolved.Contains(style.StyleId)) return;
+        if (!style.BasedOn.HasValue)
+        {
+            resolved.Add(style.StyleId);
+            return;
+        }
+
+        // Detect circular dependency
+        if (visiting.Contains(style.StyleId))
+        {
+            Logger.Warning($"Circular style inheritance detected for style ID {style.StyleId}");
+            resolved.Add(style.StyleId);
+            return;
+        }
+
+        visiting.Add(style.StyleId);
+
+        var baseStyle = GetStyle(style.BasedOn.Value);
+        if (baseStyle != null)
+        {
+            // Ensure base style is resolved first
+            ResolveStyle(baseStyle, resolved, visiting);
+
+            // Merge properties from base style
+            if (baseStyle.ParagraphProperties != null)
+            {
+                style.ParagraphProperties ??= new ParagraphProperties();
+                style.ParagraphProperties.MergeWith(baseStyle.ParagraphProperties);
+            }
+
+            if (baseStyle.RunProperties != null)
+            {
+                style.RunProperties ??= new RunProperties();
+                style.RunProperties.MergeWith(baseStyle.RunProperties);
+            }
+        }
+
+        visiting.Remove(style.StyleId);
+        resolved.Add(style.StyleId);
     }
 
     /// <summary>

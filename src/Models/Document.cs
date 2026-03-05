@@ -301,6 +301,53 @@ public class ParagraphProperties
     public bool Kinsoku { get; set; } = true; // Asian typography rules
     public bool OverflowPunct { get; set; } // Allow punctuation to extend past margin
     public bool TopLinePunct { get; set; } // Allow punctuation to start line
+
+    /// <summary>
+    /// Merges missing properties from a base style's paragraph properties.
+    /// This implements standard Word style inheritance.
+    /// </summary>
+    public void MergeWith(ParagraphProperties? baseProps)
+    {
+        if (baseProps == null) return;
+
+        // Alignment (0 = Left is default, but if it's explicitly set in base we might want it.
+        // Simplified heuristic: if current is default (Left) and base is not, take base. 
+        // A better approach would use nullable properties to track "unset" vs "set to default".
+        // Since the current model doesn't use nullable for most structs, we merge non-defaults.
+        if (Alignment == ParagraphAlignment.Left && baseProps.Alignment != ParagraphAlignment.Left) Alignment = baseProps.Alignment;
+        if (IndentLeft == 0 && baseProps.IndentLeft != 0) IndentLeft = baseProps.IndentLeft;
+        if (IndentRight == 0 && baseProps.IndentRight != 0) IndentRight = baseProps.IndentRight;
+        if (IndentFirstLine == 0 && baseProps.IndentFirstLine != 0) IndentFirstLine = baseProps.IndentFirstLine;
+        if (SpaceBefore == 0 && baseProps.SpaceBefore != 0) SpaceBefore = baseProps.SpaceBefore;
+        if (SpaceAfter == 0 && baseProps.SpaceAfter != 0) SpaceAfter = baseProps.SpaceAfter;
+        if (LineSpacing == 240 && baseProps.LineSpacing != 240) LineSpacing = baseProps.LineSpacing;
+        if (LineSpacingMultiple == 1 && baseProps.LineSpacingMultiple != 1) LineSpacingMultiple = baseProps.LineSpacingMultiple;
+
+        if (!KeepWithNext && baseProps.KeepWithNext) KeepWithNext = baseProps.KeepWithNext;
+        if (!KeepTogether && baseProps.KeepTogether) KeepTogether = baseProps.KeepTogether;
+        if (!PageBreakBefore && baseProps.PageBreakBefore) PageBreakBefore = baseProps.PageBreakBefore;
+
+        BorderTop ??= baseProps.BorderTop;
+        BorderBottom ??= baseProps.BorderBottom;
+        BorderLeft ??= baseProps.BorderLeft;
+        BorderRight ??= baseProps.BorderRight;
+        Shading ??= baseProps.Shading;
+
+        if (ListFormatId == 0 && baseProps.ListFormatId != 0) ListFormatId = baseProps.ListFormatId;
+        if (ListLevel == 0 && baseProps.ListLevel != 0) ListLevel = baseProps.ListLevel;
+        if (OutlineLevel == 0 && baseProps.OutlineLevel != 0) OutlineLevel = baseProps.OutlineLevel;
+        NumberFormat ??= baseProps.NumberFormat;
+        NumberText ??= baseProps.NumberText;
+
+        // Typography (assume true is default for some, but typically we want to inherit)
+        if (SnapToGrid && !baseProps.SnapToGrid) SnapToGrid = baseProps.SnapToGrid;
+        if (AutoSpaceDe && !baseProps.AutoSpaceDe) AutoSpaceDe = baseProps.AutoSpaceDe;
+        if (AutoSpaceDn && !baseProps.AutoSpaceDn) AutoSpaceDn = baseProps.AutoSpaceDn;
+        if (WordWrap && !baseProps.WordWrap) WordWrap = baseProps.WordWrap;
+        if (Kinsoku && !baseProps.Kinsoku) Kinsoku = baseProps.Kinsoku;
+        if (!OverflowPunct && baseProps.OverflowPunct) OverflowPunct = baseProps.OverflowPunct;
+        if (!TopLinePunct && baseProps.TopLinePunct) TopLinePunct = baseProps.TopLinePunct;
+    }
 }
 
 public enum ParagraphAlignment
@@ -456,6 +503,59 @@ public class RunProperties
     public ushort AuthorIndexIns { get; set; }
     public uint DateDel { get; set; }
     public uint DateIns { get; set; }
+
+    /// <summary>
+    /// Merges missing properties from a base style's run properties.
+    /// </summary>
+    public void MergeWith(RunProperties? baseProps)
+    {
+        if (baseProps == null) return;
+
+        if (FontIndex == -1 && baseProps.FontIndex != -1) FontIndex = baseProps.FontIndex;
+        FontName ??= baseProps.FontName;
+        
+        if (FontSize == 24 && baseProps.FontSize != 24) FontSize = baseProps.FontSize;
+        if (FontSizeCs == 24 && baseProps.FontSizeCs != 24) FontSizeCs = baseProps.FontSizeCs;
+        
+        if (!IsBold && baseProps.IsBold) IsBold = baseProps.IsBold;
+        if (!IsBoldCs && baseProps.IsBoldCs) IsBoldCs = baseProps.IsBoldCs;
+        if (!IsItalic && baseProps.IsItalic) IsItalic = baseProps.IsItalic;
+        if (!IsItalicCs && baseProps.IsItalicCs) IsItalicCs = baseProps.IsItalicCs;
+        
+        if (!IsUnderline && baseProps.IsUnderline) IsUnderline = baseProps.IsUnderline;
+        if (UnderlineType == UnderlineType.None && baseProps.UnderlineType != UnderlineType.None) UnderlineType = baseProps.UnderlineType;
+        
+        if (!IsStrikeThrough && baseProps.IsStrikeThrough) IsStrikeThrough = baseProps.IsStrikeThrough;
+        if (!IsDoubleStrikeThrough && baseProps.IsDoubleStrikeThrough) IsDoubleStrikeThrough = baseProps.IsDoubleStrikeThrough;
+        if (!IsSmallCaps && baseProps.IsSmallCaps) IsSmallCaps = baseProps.IsSmallCaps;
+        if (!IsAllCaps && baseProps.IsAllCaps) IsAllCaps = baseProps.IsAllCaps;
+        if (!IsHidden && baseProps.IsHidden) IsHidden = baseProps.IsHidden;
+        if (!IsSuperscript && baseProps.IsSuperscript) IsSuperscript = baseProps.IsSuperscript;
+        if (!IsSubscript && baseProps.IsSubscript) IsSubscript = baseProps.IsSubscript;
+        
+        if (Color == 0 && baseProps.Color != 0) Color = baseProps.Color;
+        if (BgColor == -1 && baseProps.BgColor != -1) BgColor = baseProps.BgColor;
+        if (CharacterSpacingAdjustment == 0 && baseProps.CharacterSpacingAdjustment != 0) CharacterSpacingAdjustment = baseProps.CharacterSpacingAdjustment;
+        
+        if (Language == 0 && baseProps.Language != 0) Language = baseProps.Language;
+        LanguageAsia ??= baseProps.LanguageAsia;
+        LanguageCs ??= baseProps.LanguageCs;
+
+        if (HighlightColor == 0 && baseProps.HighlightColor != 0) HighlightColor = baseProps.HighlightColor;
+        if (RgbColor == 0 && baseProps.RgbColor != 0) RgbColor = baseProps.RgbColor;
+        if (!HasRgbColor && baseProps.HasRgbColor) HasRgbColor = baseProps.HasRgbColor;
+        
+        if (!IsOutline && baseProps.IsOutline) IsOutline = baseProps.IsOutline;
+        if (!IsShadow && baseProps.IsShadow) IsShadow = baseProps.IsShadow;
+        if (!IsEmboss && baseProps.IsEmboss) IsEmboss = baseProps.IsEmboss;
+        if (!IsImprint && baseProps.IsImprint) IsImprint = baseProps.IsImprint;
+        if (Kerning == 0 && baseProps.Kerning != 0) Kerning = baseProps.Kerning;
+        if (Position == 0 && baseProps.Position != 0) Position = baseProps.Position;
+        if (CharacterScale == 100 && baseProps.CharacterScale != 100) CharacterScale = baseProps.CharacterScale;
+
+        if (SnapToGrid && !baseProps.SnapToGrid) SnapToGrid = baseProps.SnapToGrid;
+        RubyText ??= baseProps.RubyText;
+    }
 }
 
 public enum UnderlineType
