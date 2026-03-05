@@ -73,6 +73,12 @@ public class RelationshipsWriter
             WriteRelationship($"rId{ids.ThemeRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "theme/theme1.xml");
         }
         
+        // Comments/annotations relationship
+        if (ids.CommentsRId > 0)
+        {
+            WriteRelationship($"rId{ids.CommentsRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments", "comments.xml");
+        }
+        
         // Image relationships
         for (int i = 0; i < document.Images.Count; i++)
         {
@@ -209,6 +215,10 @@ public class RelationshipsWriter
         if (document.VbaProject != null)
             ids.VbaProjectRId = nextId++;
         
+        // Comments/annotations require a dedicated part
+        if (document.Annotations != null && document.Annotations.Count > 0)
+            ids.CommentsRId = nextId++;
+        
         // Header/footer parts: allocate distinct IDs per type if present
         bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst);
         bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd);
@@ -290,6 +300,8 @@ public class DocumentRelationshipIds
     public int FootnotesRId { get; set; }
     public int EndnotesRId { get; set; }
     public int VbaProjectRId { get; set; }
+    // Annotation / comments part
+    public int CommentsRId { get; set; }
     // Aggregate header/footer IDs (kept for backward compatibility)
     public int HeaderRId { get; set; }
     public int FooterRId { get; set; }
@@ -638,6 +650,12 @@ public class ContentTypesWriter
         if (document.Endnotes.Count > 0)
         {
             WriteOverride("/word/endnotes.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml");
+        }
+
+        // Comments
+        if (document.Annotations != null && document.Annotations.Count > 0)
+        {
+            WriteOverride("/word/comments.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml");
         }
         
         // Numbering

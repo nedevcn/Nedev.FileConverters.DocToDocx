@@ -600,8 +600,8 @@ public partial class DocumentWriter
         // Page size and margins: prefer per-section overrides when available
         // pgSz
         _writer.WriteStartElement("w", "pgSz", wNs);
-        int w = section?.PageWidth > 0 ? section.PageWidth : props.PageWidth;
-        int h = section?.PageHeight > 0 ? section.PageHeight : props.PageHeight;
+        int w = ClampTwips(section?.PageWidth > 0 ? section.PageWidth : props.PageWidth, 720, 31680, 12240);
+        int h = ClampTwips(section?.PageHeight > 0 ? section.PageHeight : props.PageHeight, 720, 31680, 15840);
         _writer.WriteAttributeString("w", "w", wNs, w.ToString());
         _writer.WriteAttributeString("w", "h", wNs, h.ToString());
         if (section?.IsLandscape == true || (section == null && props.IsLandscape))
@@ -610,13 +610,13 @@ public partial class DocumentWriter
 
         // pgMar
         _writer.WriteStartElement("w", "pgMar", wNs);
-        _writer.WriteAttributeString("w", "top", wNs, (section?.MarginTop != 0 ? section.MarginTop : props.MarginTop).ToString());
-        _writer.WriteAttributeString("w", "right", wNs, (section?.MarginRight != 0 ? section.MarginRight : props.MarginRight).ToString());
-        _writer.WriteAttributeString("w", "bottom", wNs, (section?.MarginBottom != 0 ? section.MarginBottom : props.MarginBottom).ToString());
-        _writer.WriteAttributeString("w", "left", wNs, (section?.MarginLeft != 0 ? section.MarginLeft : props.MarginLeft).ToString());
-        _writer.WriteAttributeString("w", "header", wNs, (section?.HeaderMargin ?? (section == null ? 720 : 0)).ToString());
-        _writer.WriteAttributeString("w", "footer", wNs, (section?.FooterMargin ?? (section == null ? 720 : 0)).ToString());
-        _writer.WriteAttributeString("w", "gutter", wNs, (section?.Gutter ?? 0).ToString());
+        _writer.WriteAttributeString("w", "top", wNs, ClampTwips(section?.MarginTop != 0 ? section!.MarginTop : props.MarginTop, 0, 15840, 1440).ToString());
+        _writer.WriteAttributeString("w", "right", wNs, ClampTwips(section?.MarginRight != 0 ? section!.MarginRight : props.MarginRight, 0, 15840, 1440).ToString());
+        _writer.WriteAttributeString("w", "bottom", wNs, ClampTwips(section?.MarginBottom != 0 ? section!.MarginBottom : props.MarginBottom, 0, 15840, 1440).ToString());
+        _writer.WriteAttributeString("w", "left", wNs, ClampTwips(section?.MarginLeft != 0 ? section!.MarginLeft : props.MarginLeft, 0, 15840, 1440).ToString());
+        _writer.WriteAttributeString("w", "header", wNs, ClampTwips(section?.HeaderMargin ?? (section == null ? 720 : 0), 0, 15840, 720).ToString());
+        _writer.WriteAttributeString("w", "footer", wNs, ClampTwips(section?.FooterMargin ?? (section == null ? 720 : 0), 0, 15840, 720).ToString());
+        _writer.WriteAttributeString("w", "gutter", wNs, ClampTwips(section?.Gutter ?? 0, 0, 31680, 0).ToString());
         _writer.WriteEndElement();
 
         // Mirror margins (left/right swapped on facing pages) – driven by DOP flag.
@@ -710,6 +710,17 @@ public partial class DocumentWriter
     {
         return paragraph.Runs != null && paragraph.Runs.Any(r =>
             (!string.IsNullOrEmpty(r.Text) && !string.IsNullOrWhiteSpace(r.Text)) || r.IsPicture || r.IsField);
+    }
+
+    /// <summary>
+    /// Clamps twips-like metrics to a safe range to prevent invalid OOXML values
+    /// from triggering Word repair mode on edge/corrupt source inputs.
+    /// </summary>
+    private static int ClampTwips(int value, int min, int max, int fallback)
+    {
+        if (value == 0)
+            return fallback;
+        return Math.Clamp(value, min, max);
     }
 
     public void WriteParagraph(ParagraphModel paragraph, bool suppressPageBreakBefore = false, SectionInfo? sectionBreak = null)

@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Xml;
+using System.Linq;
 using System.Collections.Generic;
 using Nedev.DocToDocx.Models;
 using Nedev.DocToDocx.Writers;
@@ -164,7 +165,9 @@ namespace Nedev.DocToDocx.Tests
         {
             var doc = new DocumentModel();
             var annotation = new AnnotationModel { Id = "1", Author = "Joe" };
-            annotation.Runs.Add(new RunModel { Text = "note" });
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "note" });
+            annotation.Paragraphs.Add(para);
             doc.Annotations.Add(annotation);
 
             byte[] package;
@@ -182,7 +185,72 @@ namespace Nedev.DocToDocx.Tests
             var xml = new StreamReader(commentsEntry.Open()).ReadToEnd();
             Assert.Contains("note", xml);
             Assert.Contains("Joe", xml);
+
+            var contentTypes = new StreamReader(zip.GetEntry("[Content_Types].xml").Open()).ReadToEnd();
+            Assert.Contains("/word/comments.xml", contentTypes);
+            Assert.Contains("application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml", contentTypes);
         }
+
+        [Fact]
+        public void GeneratedPackage_IsWellFormedXml()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "X" } } });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
+            foreach (var entry in zip.Entries)
+            {
+                if (entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var reader = XmlReader.Create(entry.Open());
+                    while (reader.Read()) { /* just advance to detect parse errors */ }
+                }
+            }
+        }
+
+        [Fact]
+        public void ValidatePackage_Method_ReturnsExpectedResults()
+        {
+            // create a valid document and save via converter
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "ok" } } });
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
+            DocToDocxConverter.SaveDocument(doc, path);
+            Assert.True(DocToDocxConverter.ValidatePackage(path, out var msg1), msg1);
+
+            // corrupt the first XML entry by injecting invalid bytes
+            using (var archive = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Update))
+            {
+                System.IO.Compression.ZipArchiveEntry entry = null;
+                foreach (var e in archive.Entries)
+                {
+                    if (e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                    {
+                        entry = e;
+                        break;
+                    }
+                }
+                Assert.NotNull(entry);
+                using var s = entry.Open();
+                s.Seek(0, SeekOrigin.Begin);
+                // write some invalid xml content
+                var bytes = Encoding.UTF8.GetBytes("<w:broken><");
+                s.Write(bytes, 0, bytes.Length);
+            }
+            Assert.False(DocToDocxConverter.ValidatePackage(path, out var msg2));
+            Assert.NotNull(msg2);
+            File.Delete(path);
+        }
+
 
         [Fact]
         public void EncryptionHelper_XorRoundTrips()

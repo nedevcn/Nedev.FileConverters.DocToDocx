@@ -56,14 +56,23 @@ public class SectionReader
 
             if (fcSepx != 0xFFFFFFFF)
             {
-                // Read SEPX from WordDocument stream
+                // Read SEPX from WordDocument stream, but guard against bogus offsets
                 long originalWordPos = _wordDocReader.BaseStream.Position;
                 try
                 {
+                    // make sure offset is within the stream
+                    if (fcSepx < 0 || fcSepx + 2 > _wordDocReader.BaseStream.Length)
+                        throw new IOException("SEPX offset outside WordDocument stream");
+
                     _wordDocReader.BaseStream.Seek(fcSepx, SeekOrigin.Begin);
                     ushort cb = _wordDocReader.ReadUInt16();
+
+                    // sanity check the claimed length before reading bytes
                     if (cb > 0)
                     {
+                        if (fcSepx + 2 + cb > _wordDocReader.BaseStream.Length)
+                            throw new IOException($"SEPX size {cb} extends past end of stream");
+
                         byte[] grpprl = _wordDocReader.ReadBytes(cb);
                         var sepBase = new SepBase();
                         var parser = new SprmParser(_wordDocReader, 0);

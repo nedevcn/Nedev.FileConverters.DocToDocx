@@ -74,6 +74,7 @@ public partial class DocumentWriter
         var preferredWidth = table.Properties?.PreferredWidth ?? 0;
         if (preferredWidth > 0)
         {
+            preferredWidth = Math.Clamp(preferredWidth, 1, 31680);
             _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", preferredWidth.ToString());
             _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
         }
@@ -102,8 +103,9 @@ public partial class DocumentWriter
         // and helps nested or offset tables align closer to the original layout.
         if (table.Properties != null && table.Properties.Indent != 0)
         {
+            var clampedIndent = Math.Clamp(table.Properties.Indent, -31680, 31680);
             _writer.WriteStartElement("w", "tblInd", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-            _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", table.Properties.Indent.ToString());
+            _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", clampedIndent.ToString());
             _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
             _writer.WriteEndElement();
         }
@@ -176,8 +178,9 @@ public partial class DocumentWriter
             
             if (row.Properties.Height > 0)
             {
+                var rowHeight = Math.Clamp(row.Properties.Height, 1, 31680);
                 _writer.WriteStartElement("w", "trHeight", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-                _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", row.Properties.Height.ToString());
+                _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", rowHeight.ToString());
                 if (row.Properties.HeightIsExact)
                 {
                     _writer.WriteAttributeString("w", "hRule", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "exact");
@@ -244,8 +247,9 @@ public partial class DocumentWriter
             // Cell width
             if (cell.Properties?.Width > 0)
             {
+                var cellWidth = Math.Clamp(cell.Properties.Width, 1, 31680);
                 _writer.WriteStartElement("w", "tcW", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-                _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", cell.Properties.Width.ToString());
+                _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", cellWidth.ToString());
                 _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");
                 _writer.WriteEndElement();
             }

@@ -4,6 +4,9 @@ using System.IO;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Xunit;
+using System.Reflection;
+using System.Text;
+using Nedev.DocToDocx.Readers;
 using Nedev.DocToDocx;
 using Nedev.DocToDocx.Cli;
 using Nedev.DocToDocx.Models;
@@ -149,6 +152,43 @@ namespace Nedev.DocToDocx.Tests
             }
 
             File.Delete(tempOut);
+        }
+
+        [Fact]
+        public void SectionReader_BogusSepx_DoesNotThrow()
+        {
+            // build a fake PLCFSED table with one section and a bogus offset
+            // we need a nonzero offset because SectionReader treats 0 as "no table".
+            const int offset = 4;
+            var table = new MemoryStream();
+            // pad to offset
+            table.Write(new byte[offset], 0, offset);
+            using (var bw = new BinaryWriter(table, Encoding.Default, true))
+            {
+                bw.Write(0);             // cp start
+                bw.Write(100);           // cp end
+                bw.Write((uint)0x12345678); // fcSepx points well past word stream
+                bw.Write(new byte[8]);  // reserved
+            }
+            table.Position = 0;
+
+            var word = new MemoryStream(new byte[4]); // too small for offset
+
+            var fib = new FibReader(new BinaryReader(new MemoryStream(new byte[0])));
+            // use reflection to set the public read-only properties with binding flags
+            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            typeof(FibReader).GetProperty("FcPlcfSed", flags)!.SetValue(fib, (uint)offset);
+            typeof(FibReader).GetProperty("LcbPlcfSed", flags)!.SetValue(fib, (uint)(table.Length - offset));
+            // adjust stream position to start of actual data when SectionReader seeks
+            // since fcPlcfSed is offset, we need to provide table stream with that many bytes at front
+
+            var reader = new SectionReader(new BinaryReader(table), new BinaryReader(word), fib);
+            var sections = reader.ReadSections();
+
+            Assert.Single(sections);
+            // range cp should match our input values; page width stays at its default
+            Assert.Equal(0, sections[0].StartCp);
+            Assert.Equal(100, sections[0].EndCp);
         }
     }
 }

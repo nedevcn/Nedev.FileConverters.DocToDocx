@@ -55,7 +55,15 @@ public static class DocToDocxConverter
         // before the underlying stream is closed or before we return.
         zipWriter.Dispose();
         
-        Console.WriteLine("Conversion complete!");
+        // validate output to catch accidental corruption early
+        if (!ValidatePackage(outputPath, out var validationMessage))
+        {
+            Console.WriteLine("Warning: generated DOCX failed validation: " + validationMessage);
+        }
+        else
+        {
+            Console.WriteLine("Conversion complete!");
+        }
     }
     
     /// <summary>
@@ -106,14 +114,22 @@ public static class DocToDocxConverter
         
         progress?.Report(new ConversionProgress { Stage = ConversionStage.Writing, PercentComplete = 60 });
         
-        using var stream = File.Create(outputPath);
-        using var zipWriter = new ZipWriter(stream);
-        
-        progress?.Report(new ConversionProgress { Stage = ConversionStage.Writing, PercentComplete = 80 });
-        zipWriter.WriteDocument(reader.Document);
-        
-        // Explicitly dispose the writer to flush the ZIP central directory
-        zipWriter.Dispose();
+        using (var stream = File.Create(outputPath))
+        {
+            using var zipWriter = new ZipWriter(stream);
+
+            progress?.Report(new ConversionProgress { Stage = ConversionStage.Writing, PercentComplete = 80 });
+            zipWriter.WriteDocument(reader.Document);
+
+            // Explicitly dispose the writer to flush the ZIP central directory
+            zipWriter.Dispose();
+        }
+
+        // validate after stream closed
+        if (!ValidatePackage(outputPath, out var validationMessage))
+        {
+            Console.WriteLine("Warning: generated DOCX failed validation: " + validationMessage);
+        }
         
         progress?.Report(new ConversionProgress { Stage = ConversionStage.Complete, PercentComplete = 100 });
     }
@@ -139,15 +155,42 @@ public static class DocToDocxConverter
             Directory.CreateDirectory(outputDir);
         }
         
-        using var stream = File.Create(outputPath);
-        using var zipWriter = new ZipWriter(stream);
-        zipWriter.WriteDocument(document);
-        
-        // Explicitly dispose the writer to flush the ZIP central directory
-        zipWriter.Dispose();
+        using (var stream = File.Create(outputPath))
+        {
+            using var zipWriter = new ZipWriter(stream);
+            zipWriter.WriteDocument(document);
+            // Explicitly dispose the writer to flush the ZIP central directory
+            zipWriter.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Performs simple validation of a generated DOCX package: each XML part must parse.
+    /// Returns true if all XML entries are well-formed; otherwise false and an error message.
+    /// </summary>
+    public static bool ValidatePackage(string path, out string? errorMessage)
+    {
+        try
+        {
+            using var archive = new System.IO.Compression.ZipArchive(File.OpenRead(path), System.IO.Compression.ZipArchiveMode.Read);
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var reader = System.Xml.XmlReader.Create(entry.Open());
+                    while (reader.Read()) { }
+                }
+            }
+            errorMessage = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return false;
+        }
     }
 }
-
 /// <summary>
 /// Represents the progress of a document conversion
 /// </summary>

@@ -229,13 +229,23 @@ public class ZipWriter : IDisposable
             WriteEndnotes(document);
         }
 
+        // Write comments/annotations
+        if (document.Annotations != null && document.Annotations.Count > 0)
+        {
+            AddXmlEntry("word/comments.xml", w =>
+            {
+                var writer = new CommentsWriter(w);
+                writer.WriteComments(document);
+            });
+        }
+        
         // Write charts (if any). For now we emit one chart part per ChartModel
         // using a very small, self-contained ChartsWriter.
         if (document.Charts.Count > 0)
         {
             WriteCharts(document);
         }
-
+        
         // Write OLE Objects
         if (document.OleObjects.Count > 0)
         {
