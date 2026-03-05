@@ -254,9 +254,11 @@ public static class OfficeArtMapper
                 ZOrder = zOrderCounter++
             };
 
-            // Map CP to nearest paragraph by MinCp.
+            // Map CP to the paragraph containing the CP.
+            // A paragraph contains the CP if its MinCp is <= the shape's CP.
+            // Since paraInfos is ordered by MinCp ascending, the LAST one satisfying MinCp <= cp is the container.
             var cp = fspa.Cp;
-            var bestPara = paraInfos.FirstOrDefault(p => p.MinCp != int.MaxValue && p.MinCp >= cp);
+            var bestPara = paraInfos.LastOrDefault(p => p.MinCp != int.MaxValue && p.MinCp <= cp);
             if (bestPara == null)
             {
                 bestPara = paraInfos.FirstOrDefault(p => p.MinCp != int.MaxValue);

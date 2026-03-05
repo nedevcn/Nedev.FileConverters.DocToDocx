@@ -61,117 +61,87 @@ public class HeaderFooterReader
         }
     }
 
-    /// <summary>
-    /// Reads PlcfHdd structure.
-    ///
-    /// Structure:
-    ///   - Array of CPs (character positions) - (n+1) entries
-    ///   - Array of Hdd entries - n entries
-    ///
-    /// Each Hdd entry contains 6 words (12 bytes) indicating header/footer story lengths.
-    /// </summary>
     private void ReadPlcfHdd(DocumentModel document)
     {
         _tableReader.BaseStream.Seek(_fib.FcPlcfHdd, SeekOrigin.Begin);
 
-        // Calculate number of entries
-        // PlcfHdd structure: (n+1) CPs + n * 12 bytes of Hdd data
-        // Total size = (n+1) * 4 + n * 12 = 4n + 4 + 12n = 16n + 4
-        // So n = (size - 4) / 16
-
         var dataSize = (int)_fib.LcbPlcfHdd;
-        if (dataSize < 8) return;
+        if (dataSize < 4) return;
 
-        var entryCount = (dataSize - 4) / 16;
+        // PlcfHdd structure consists solely of an array of CPs.
+        // n = number of header/footer boundaries. Each CP is 4 bytes.
+        // Total dataSize = (n + 1) * 4
+        var entryCount = (dataSize - 4) / 4;
         if (entryCount <= 0) return;
 
-        // Read CP array
         var cpArray = new int[entryCount + 1];
         for (int i = 0; i <= entryCount; i++)
         {
             cpArray[i] = _tableReader.ReadInt32();
         }
 
-        // Read Hdd entries
-        for (int i = 0; i < entryCount; i++)
+        // The entries are grouped into blocks of 6 for each section:
+        // 0: Header Even
+        // 1: Header Odd (also used as default if no even/first exists)
+        // 2: Footer Even
+        // 3: Footer Odd (also used as default if no even/first exists)
+        // 4: Header First
+        // 5: Footer First
+        int sectionCount = entryCount / 6;
+
+        for (int sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++)
         {
-            // Each Hdd entry has 6 words:
-            //   cchHdd (6 words) - character counts for each header/footer type
-            var hddData = new short[6];
-            for (int j = 0; j < 6; j++)
+            int baseIdx = sectionIndex * 6;
+            
+            var types = new[]
             {
-                hddData[j] = _tableReader.ReadInt16();
-            }
+                HeaderFooterType.HeaderEven,
+                HeaderFooterType.HeaderOdd,
+                HeaderFooterType.FooterEven,
+                HeaderFooterType.FooterOdd,
+                HeaderFooterType.HeaderFirst,
+                HeaderFooterType.FooterFirst
+            };
 
-            // Process this section's headers/footers
-            ProcessHddEntry(i, cpArray, hddData, document);
-        }
-    }
-
-    /// <summary>
-    /// Processes a single Hdd entry to extract header/footer content.
-    ///
-    /// Hdd entry format (6 words):
-    ///   Word 0: cchHeaderFirst - first page header length
-    ///   Word 1: cchFooterFirst - first page footer length
-    ///   Word 2: cchHeaderOdd - odd page header length
-    ///   Word 3: cchFooterOdd - odd page footer length
-    ///   Word 4: cchHeaderEven - even page header length
-    ///   Word 5: cchFooterEven - even page footer length
-    /// </summary>
-    private void ProcessHddEntry(int sectionIndex, int[] cpArray, short[] hddData, DocumentModel document)
-    {
-        // Map of header/footer types
-        var types = new[]
-        {
-            (Type: HeaderFooterType.HeaderFirst, Length: hddData[0]),
-            (Type: HeaderFooterType.FooterFirst, Length: hddData[1]),
-            (Type: HeaderFooterType.HeaderOdd, Length: hddData[2]),
-            (Type: HeaderFooterType.FooterOdd, Length: hddData[3]),
-            (Type: HeaderFooterType.HeaderEven, Length: hddData[4]),
-            (Type: HeaderFooterType.FooterEven, Length: hddData[5])
-        };
-
-        // Calculate starting CP for this section's header/footer stories
-        // The header/footer text is stored in the WordDocument stream
-        // at specific CP positions
-
-        int currentCp = cpArray[sectionIndex];
-
-        foreach (var (type, length) in types)
-        {
-            if (length <= 0) continue;
-
-            try
+            for (int t = 0; t < 6; t++)
             {
-                // Extract header/footer text
-                var text = ExtractHeaderFooterText(currentCp, length);
+                int currentCp = cpArray[baseIdx + t];
+                int nextCp = cpArray[baseIdx + t + 1];
+                int length = nextCp - currentCp;
 
-                var model = new HeaderFooterModel
-                {
-                    Type = type,
-                    SectionIndex = sectionIndex,
-                    Text = text,
-                    CharacterPosition = currentCp,
-                    CharacterLength = length
-                };
+                if (length <= 0) continue;
 
-                if (type == HeaderFooterType.HeaderFirst ||
-                    type == HeaderFooterType.HeaderOdd ||
-                    type == HeaderFooterType.HeaderEven)
+                var type = types[t];
+
+                try
                 {
-                    Headers.Add(model);
+                    // Extract header/footer text
+                    var text = ExtractHeaderFooterText(currentCp, length);
+
+                    var model = new HeaderFooterModel
+                    {
+                        Type = type,
+                        SectionIndex = sectionIndex,
+                        Text = text,
+                        CharacterPosition = currentCp,
+                        CharacterLength = length
+                    };
+
+                    if (type == HeaderFooterType.HeaderFirst ||
+                        type == HeaderFooterType.HeaderOdd ||
+                        type == HeaderFooterType.HeaderEven)
+                    {
+                        Headers.Add(model);
+                    }
+                    else
+                    {
+                        Footers.Add(model);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Footers.Add(model);
+                    Logger.Warning($"Failed to extract header/footer type {type} for section {sectionIndex}", ex);
                 }
-
-                currentCp += length;
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning("Failed to extract header/footer", ex);
             }
         }
     }

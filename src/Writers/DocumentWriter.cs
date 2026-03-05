@@ -1364,6 +1364,12 @@ public class DocumentWriter
         // Write each cell
         foreach (var cell in row.Cells)
         {
+            if (IsCoveredByHorizontalMerge(table, row.Index, cell.ColumnIndex))
+            {
+                // In OOXML, horizontally covered cells (due to gridSpan) MUST NOT be output as w:tc elements.
+                // Otherwise, the number of columns in the row exceeds the table grid, causing severe corruption.
+                continue;
+            }
             WriteTableCell(cell, row, table);
         }
         
@@ -1383,7 +1389,6 @@ public class DocumentWriter
         // Determine vertical merge role for this cell
         bool isVmergeStart = cell.RowSpan > 1;
         bool isVmergeContinue = !isVmergeStart && IsCoveredByVerticalMerge(table, row.Index, cell.ColumnIndex);
-        bool isHmergeCovered = IsCoveredByHorizontalMerge(table, row.Index, cell.ColumnIndex);
         
         bool hasTcPr = cell.Properties?.Width > 0 || cell.ColumnSpan > 1 || cell.RowSpan > 1 || isVmergeContinue ||
                        cell.Properties?.BorderTop != null || cell.Properties?.BorderBottom != null ||
@@ -1406,7 +1411,7 @@ public class DocumentWriter
             }
             
             // Grid span (column span) — only on the first (uncovered) cell
-            if (cell.ColumnSpan > 1 && !isHmergeCovered)
+            if (cell.ColumnSpan > 1)
             {
                 _writer.WriteStartElement("w", "gridSpan", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                 _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", cell.ColumnSpan.ToString());
@@ -1467,11 +1472,9 @@ public class DocumentWriter
             _writer.WriteEndElement(); // w:tcPr
         }
         
-        // Write cell content (paragraphs) only for:
-        //   - vertical-merge starting cells
-        //   - horizontal-merge starting cells
-        if (!IsCoveredByVerticalMerge(table, row.Index, cell.ColumnIndex) &&
-            !isHmergeCovered)
+        // Write cell content (paragraphs) only for vertical-merge starting cells.
+        // Horizontal-merge covered cells are skipped upstream so we never reach here for them.
+        if (!IsCoveredByVerticalMerge(table, row.Index, cell.ColumnIndex))
         {
             foreach (var para in cell.Paragraphs)
             {
