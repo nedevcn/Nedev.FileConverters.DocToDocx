@@ -554,6 +554,7 @@ public class DocReader : IDisposable
 
         string? activeEmbedProgId = null;
         string? activeOleObjectId = null;
+        HyperlinkModel? activeHyperlink = null;
 
         var runStart = 0;
         ChpBase? currentChp = null;
@@ -566,7 +567,12 @@ public class DocReader : IDisposable
             if (chpMap.TryGetValue(cp, out var foundChp))
                 chpAtCp = foundChp;
 
-            bool chpChanged = i == paraText.Length || !ChpEquals(currentChp, chpAtCp);
+            // Isolate special characters into their own runs of length 1 to prevent data loss or index smearing
+            // We isolate \x01 (inline picture) and \x08 (floating picture) because they map to complex objects.
+            bool isSpecialChar = i < paraText.Length && (paraText[i] == '\x01' || paraText[i] == '\x08');
+            bool previousWasSpecial = i > 0 && (paraText[i - 1] == '\x01' || paraText[i - 1] == '\x08');
+            
+            bool chpChanged = i == paraText.Length || !ChpEquals(currentChp, chpAtCp) || isSpecialChar || previousWasSpecial;
 
             if (chpChanged && runStart < i)
             {
@@ -574,7 +580,8 @@ public class DocReader : IDisposable
                 var cleanText = CleanSpecialChars(runText);
                 var isPicture = runText.Contains('\x01') || runText.Contains('\x08');
 
-                if (!string.IsNullOrEmpty(cleanText) || isPicture)
+                // Even if text is empty (special char stripped), preserve it if it's visual or structural (hyperlink/field)
+                if (!string.IsNullOrEmpty(cleanText) || isPicture || runText.Contains('\x13') || runText.Contains('\x14') || runText.Contains('\x15'))
                 {
                     RunProperties runProps;
                     if (currentChp != null)
@@ -609,7 +616,27 @@ public class DocReader : IDisposable
                                 {
                                     activeEmbedProgId = parsedField.Arguments;
                                 }
+                                else if (parsedField != null && parsedField.Type == FieldType.Hyperlink && _hyperlinkReader != null)
+                                {
+                                    activeHyperlink = _hyperlinkReader.ParseHyperlink(run.FieldCode)
+                                                    ?? _hyperlinkReader.CreateHyperlink(parsedField.Arguments);
+                                }
                             }
+                        }
+                    }
+
+                    // Apply active hyperlink state mapped across all split runs within the boundaries
+                    if (activeHyperlink != null && !string.IsNullOrEmpty(activeHyperlink.Url))
+                    {
+                        run.IsHyperlink = true;
+                        run.HyperlinkUrl = activeHyperlink.Url;
+                        run.HyperlinkRelationshipId = activeHyperlink.RelationshipId;
+                        run.IsField = false; // Treat as hyperlink, overriding generic field semantics
+
+                        if (!Document.Hyperlinks.Any(h => string.Equals(h.Url, activeHyperlink.Url, StringComparison.OrdinalIgnoreCase)
+                                                            && string.Equals(h.Bookmark, activeHyperlink.Bookmark, StringComparison.Ordinal)))
+                        {
+                            Document.Hyperlinks.Add(activeHyperlink);
                         }
                     }
 
@@ -641,33 +668,6 @@ public class DocReader : IDisposable
                         }
                     }
 
-                    // Try to interpret hyperlink fields as true OOXML hyperlinks (requires field code parsed above)
-                    if (!string.IsNullOrEmpty(run.FieldCode) && _fieldReader != null && _hyperlinkReader != null)
-                        {
-                            var field = _fieldReader.ParseField(run.FieldCode);
-                            if (field != null && field.Type == FieldType.Hyperlink)
-                            {
-                                var hyperlink = _hyperlinkReader.ParseHyperlink(run.FieldCode)
-                                                ?? _hyperlinkReader.CreateHyperlink(field.Arguments);
-
-                                if (!string.IsNullOrEmpty(hyperlink.Url))
-                                {
-                                    run.IsHyperlink = true;
-                                    run.HyperlinkUrl = hyperlink.Url;
-                                    run.HyperlinkRelationshipId = hyperlink.RelationshipId;
-
-                                    // Treat this run as a hyperlink rather than a generic field
-                                    run.IsField = false;
-
-                                    if (!Document.Hyperlinks.Any(h => string.Equals(h.Url, hyperlink.Url, StringComparison.OrdinalIgnoreCase)
-                                                                       && string.Equals(h.Bookmark, hyperlink.Bookmark, StringComparison.Ordinal)))
-                                    {
-                                        Document.Hyperlinks.Add(hyperlink);
-                                    }
-                                }
-                            }
-                        }
-
                     if (isPicture)
                     {
                         run.IsPicture = true;
@@ -683,9 +683,10 @@ public class DocReader : IDisposable
 
                     if (runText.Contains('\x15'))
                     {
-                        // Field end
+                        // Field end clears persistent modes
                         activeEmbedProgId = null;
                         activeOleObjectId = null;
+                        activeHyperlink = null;
                     }
 
                     runs.Add(run);
