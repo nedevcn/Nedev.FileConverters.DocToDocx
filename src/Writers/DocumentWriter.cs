@@ -2214,20 +2214,30 @@ public class DocumentWriter
         else
         {
             _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-
             WriteRunProperties(run);
 
             if (run.IsPicture && run.ImageIndex >= 0)
             {
                 if (run.IsOle && !string.IsNullOrEmpty(run.OleObjectId) && !string.IsNullOrEmpty(run.OleProgId))
                 {
-                    WriteOleObject(run);
+                    var oleObj = _document?.OleObjects.FirstOrDefault(o => o.ObjectId == run.OleObjectId);
+                    if (oleObj != null && !string.IsNullOrEmpty(oleObj.MathContent))
+                    {
+                        // Native Math (OMML) should be a sibling of w:r, not inside it.
+                        _writer.WriteEndElement(); // w:r
+                        _writer.WriteRaw(oleObj.MathContent);
+                    }
+                    else
+                    {
+                        WriteOleObject(run);
+                        _writer.WriteEndElement(); // w:r
+                    }
                 }
                 else
                 {
                     WritePicture(run);
+                    _writer.WriteEndElement(); // w:r
                 }
-                _writer.WriteEndElement(); // w:r
             }
             else if (run.IsField)
             {

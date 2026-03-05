@@ -368,6 +368,19 @@ public class DocReader : IDisposable
                             ProgId = progId ?? "Unknown",
                             ObjectData = oleData
                         };
+
+                        // Convert Equation.3 to OMML
+                        if (oleObj.ProgId == "Equation.3")
+                        {
+                            var eqNative = _cfb.GetChildren(child).FirstOrDefault(c => c.Name == "Equation Native");
+                            if (eqNative != null)
+                            {
+                                var mtefBytes = _cfb.GetStreamBytes(eqNative);
+                                var mtefReader = new MtefReader(mtefBytes);
+                                oleObj.MathContent = mtefReader.ConvertToOmml();
+                            }
+                        }
+
                         document.OleObjects.Add(oleObj);
                     }
                     catch { }

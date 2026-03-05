@@ -13,4 +13,5 @@ public class OleObjectModel
     public byte[] ObjectData { get; set; } = Array.Empty<byte>();
     public int ImageIndex { get; set; } = -1; // Visual representation
     public string? RelationshipId { get; set; }
+    public string? MathContent { get; set; } // Converted OMML
 }
