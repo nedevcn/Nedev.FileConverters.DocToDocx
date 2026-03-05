@@ -18,6 +18,10 @@ public class DocumentWriter
     private int _bookmarkCounter = 0;
     private HashSet<string> _startedComments = new();
     private HashSet<string> _endedComments = new();
+    /// <summary>Paragraph index → list of annotation IDs whose range starts at that paragraph.</summary>
+    private Dictionary<int, List<int>> _commentStartsByParagraph = new();
+    /// <summary>Paragraph index → list of annotation IDs whose range ends at that paragraph.</summary>
+    private Dictionary<int, List<int>> _commentEndsByParagraph = new();
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>
     private bool _suppressLeadingPageBreak;
     /// <summary>When true, the next picture written in the body should use full-page dimensions (first-page background).</summary>
@@ -101,21 +105,21 @@ public class DocumentWriter
             var relHeight = shape.Anchor?.ZOrder ?? 0;
             if (relHeight < 0) relHeight = 0;
             _writer.WriteAttributeString("relativeHeight", relHeight.ToString());
-            _writer.WriteAttributeString("behindDoc", "0");
+            _writer.WriteAttributeString("behindDoc", shape.Anchor?.WrapType == ShapeWrapType.BehindText ? "1" : "0");
             _writer.WriteAttributeString("locked", "0");
             _writer.WriteAttributeString("layoutInCell", "1");
             _writer.WriteAttributeString("allowOverlap", "1");
 
             // Horizontal & vertical position.
             _writer.WriteStartElement("wp", "positionH", wpNs);
-            _writer.WriteAttributeString("relativeFrom", "page");
+            _writer.WriteAttributeString("relativeFrom", GetOOXMLRelativeTo(shape.Anchor?.HorizontalRelativeTo ?? ShapeRelativeTo.Page));
             _writer.WriteStartElement("wp", "posOffset", wpNs);
             _writer.WriteString(xEmu.ToString());
             _writer.WriteEndElement(); // wp:posOffset
             _writer.WriteEndElement(); // wp:positionH
 
             _writer.WriteStartElement("wp", "positionV", wpNs);
-            _writer.WriteAttributeString("relativeFrom", "page");
+            _writer.WriteAttributeString("relativeFrom", GetOOXMLRelativeTo(shape.Anchor?.VerticalRelativeTo ?? ShapeRelativeTo.Page));
             _writer.WriteStartElement("wp", "posOffset", wpNs);
             _writer.WriteString(yEmu.ToString());
             _writer.WriteEndElement(); // wp:posOffset
@@ -135,10 +139,8 @@ public class DocumentWriter
             _writer.WriteAttributeString("b", "0");
             _writer.WriteEndElement();
 
-            // Text wrapping: square by default for shapes.
-            _writer.WriteStartElement("wp", "wrapSquare", wpNs);
-            _writer.WriteAttributeString("wrapText", "bothSides");
-            _writer.WriteEndElement();
+            // Text wrapping
+            WriteWrapMode(shape.Anchor?.WrapType ?? ShapeWrapType.Square);
 
             // docPr
             _writer.WriteStartElement("wp", "docPr", wpNs);
@@ -480,6 +482,9 @@ public class DocumentWriter
         // hints; charts without hints will be emitted near the end.
         var chartsByParagraph = BuildChartsByParagraphMap(document);
 
+        // Build comment range mapping (annotation CP → paragraph index)
+        BuildCommentRangeMap(document);
+
         // Suppress leading pageBreakBefore so first visible content (e.g. 绿色等级评价报告) appears on page 1
         _suppressLeadingPageBreak = true;
 
@@ -546,6 +551,82 @@ public class DocumentWriter
         WriteSections(document);
         
         _writer.WriteEndElement(); // w:body
+    }
+
+    /// <summary>
+    /// Builds _commentStartsByParagraph and _commentEndsByParagraph by mapping
+    /// annotation CP ranges to the paragraph that contains those CPs.
+    /// </summary>
+    private void BuildCommentRangeMap(DocumentModel document)
+    {
+        _commentStartsByParagraph.Clear();
+        _commentEndsByParagraph.Clear();
+
+        if (document.Annotations == null || document.Annotations.Count == 0)
+            return;
+
+        // Build a sorted list of (firstRunCp, paragraph index) for quick lookup.
+        // Each entry represents the first CP of a paragraph.
+        var paragraphCpRanges = new List<(int startCp, int endCp, int paragraphIndex)>();
+        foreach (var para in document.Paragraphs)
+        {
+            if (para.Runs.Count == 0) continue;
+            int startCp = para.Runs[0].CharacterPosition;
+            var lastRun = para.Runs[para.Runs.Count - 1];
+            int endCp = lastRun.CharacterPosition + Math.Max(1, lastRun.CharacterLength);
+            paragraphCpRanges.Add((startCp, endCp, para.Index));
+        }
+
+        if (paragraphCpRanges.Count == 0) return;
+        paragraphCpRanges.Sort((a, b) => a.startCp.CompareTo(b.startCp));
+
+        // Helper: find the paragraph index for a given CP via binary search.
+        int FindParagraphForCp(int cp)
+        {
+            int lo = 0, hi = paragraphCpRanges.Count - 1;
+            int best = -1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (paragraphCpRanges[mid].startCp <= cp)
+                {
+                    best = mid;
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid - 1;
+                }
+            }
+            if (best >= 0) return paragraphCpRanges[best].paragraphIndex;
+            // Fallback: use the first paragraph
+            return paragraphCpRanges[0].paragraphIndex;
+        }
+
+        for (int i = 0; i < document.Annotations.Count; i++)
+        {
+            var ann = document.Annotations[i];
+            int commentId = i; // matches the ID written by CommentsWriter
+
+            int startPara = FindParagraphForCp(ann.StartCharacterPosition);
+            int endPara = ann.EndCharacterPosition > ann.StartCharacterPosition
+                ? FindParagraphForCp(ann.EndCharacterPosition)
+                : startPara;
+
+            if (!_commentStartsByParagraph.TryGetValue(startPara, out var startList))
+            {
+                startList = new List<int>();
+                _commentStartsByParagraph[startPara] = startList;
+            }
+            startList.Add(commentId);
+
+            if (!_commentEndsByParagraph.TryGetValue(endPara, out var endList))
+            {
+                endList = new List<int>();
+                _commentEndsByParagraph[endPara] = endList;
+            }
+            endList.Add(commentId);
+        }
     }
 
     /// <summary>
@@ -795,42 +876,37 @@ public class DocumentWriter
         var relHeight = anchor.ZOrder;
         if (relHeight < 0) relHeight = 0;
         _writer.WriteAttributeString("relativeHeight", relHeight.ToString());
-        _writer.WriteAttributeString("behindDoc", "0");
+        _writer.WriteAttributeString("relativeHeight", relHeight.ToString());
+        _writer.WriteAttributeString("behindDoc", anchor.WrapType == ShapeWrapType.BehindText ? "1" : "0");
         _writer.WriteAttributeString("locked", "0");
         _writer.WriteAttributeString("layoutInCell", "1");
         _writer.WriteAttributeString("allowOverlap", "1");
 
+        const string wpNs = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+        
         // Position
-        string MapRelative(ShapeRelativeTo rel) => rel switch
-        {
-            ShapeRelativeTo.Margin => "margin",
-            ShapeRelativeTo.Column => "column",
-            ShapeRelativeTo.Paragraph => "paragraph",
-            _ => "page"
-        };
-
-        _writer.WriteStartElement("wp", "positionH", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-        _writer.WriteAttributeString("relativeFrom", MapRelative(anchor.HorizontalRelativeTo));
-        _writer.WriteStartElement("wp", "posOffset", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        _writer.WriteStartElement("wp", "positionH", wpNs);
+        _writer.WriteAttributeString("relativeFrom", GetOOXMLRelativeTo(anchor.HorizontalRelativeTo));
+        _writer.WriteStartElement("wp", "posOffset", wpNs);
         _writer.WriteString(xEmu.ToString());
         _writer.WriteEndElement(); // wp:posOffset
         _writer.WriteEndElement(); // wp:positionH
 
-        _writer.WriteStartElement("wp", "positionV", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-        _writer.WriteAttributeString("relativeFrom", MapRelative(anchor.VerticalRelativeTo));
-        _writer.WriteStartElement("wp", "posOffset", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        _writer.WriteStartElement("wp", "positionV", wpNs);
+        _writer.WriteAttributeString("relativeFrom", GetOOXMLRelativeTo(anchor.VerticalRelativeTo));
+        _writer.WriteStartElement("wp", "posOffset", wpNs);
         _writer.WriteString(yEmu.ToString());
         _writer.WriteEndElement(); // wp:posOffset
         _writer.WriteEndElement(); // wp:positionV
 
         // Extent
-        _writer.WriteStartElement("wp", "extent", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        _writer.WriteStartElement("wp", "extent", wpNs);
         _writer.WriteAttributeString("cx", widthEmu.ToString());
         _writer.WriteAttributeString("cy", heightEmu.ToString());
         _writer.WriteEndElement();
 
         // Effect extent
-        _writer.WriteStartElement("wp", "effectExtent", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        _writer.WriteStartElement("wp", "effectExtent", wpNs);
         _writer.WriteAttributeString("l", "0");
         _writer.WriteAttributeString("t", "0");
         _writer.WriteAttributeString("r", "0");
@@ -838,17 +914,7 @@ public class DocumentWriter
         _writer.WriteEndElement();
 
         // Text wrapping
-        if (anchor.WrapType == ShapeWrapType.None)
-        {
-            _writer.WriteStartElement("wp", "wrapNone", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-            _writer.WriteEndElement();
-        }
-        else
-        {
-            _writer.WriteStartElement("wp", "wrapSquare", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
-            _writer.WriteAttributeString("wrapText", "bothSides");
-            _writer.WriteEndElement();
-        }
+        WriteWrapMode(anchor.WrapType);
 
         // Doc properties
         _writer.WriteStartElement("wp", "docPr", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
@@ -930,16 +996,15 @@ public class DocumentWriter
     
     private void WriteSections(DocumentModel document)
     {
-        // If there are explicit sections, their w:sectPr have already been written
-        // inline after the corresponding paragraphs. For documents without any
-        // SectionInfo, fall back to a single sectPr at the end of the body.
-        if (document.Properties.Sections.Count == 0)
-        {
-            const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-            _writer.WriteStartElement("w", "sectPr", wNs);
-            WriteSectionContent(null);
-            _writer.WriteEndElement();
-        }
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        _writer.WriteStartElement("w", "sectPr", wNs);
+        
+        SectionInfo? lastSection = null;
+        if (document.Properties.Sections.Count > 0)
+            lastSection = document.Properties.Sections[document.Properties.Sections.Count - 1];
+
+        WriteSectionContent(lastSection);
+        _writer.WriteEndElement(); // sectPr
     }
     
     private void WriteSectionProperties(DocumentProperties props)
@@ -1057,52 +1122,25 @@ public class DocumentWriter
         }
 
         // Page size and margins: prefer per-section overrides when available
-        int pageWidth;
-        int pageHeight;
-        bool isLandscape;
-        int marginTop;
-        int marginBottom;
-        int marginLeft;
-        int marginRight;
-
-        if (section != null)
-        {
-            pageWidth = section.PageWidth > 0 ? section.PageWidth : props.PageWidth;
-            pageHeight = section.PageHeight > 0 ? section.PageHeight : props.PageHeight;
-            isLandscape = section.IsLandscape;
-            marginTop = section.MarginTop != 0 ? section.MarginTop : props.MarginTop;
-            marginBottom = section.MarginBottom != 0 ? section.MarginBottom : props.MarginBottom;
-            marginLeft = section.MarginLeft != 0 ? section.MarginLeft : props.MarginLeft;
-            marginRight = section.MarginRight != 0 ? section.MarginRight : props.MarginRight;
-        }
-        else
-        {
-            pageWidth = props.PageWidth;
-            pageHeight = props.PageHeight;
-            isLandscape = props.IsLandscape;
-            marginTop = props.MarginTop;
-            marginBottom = props.MarginBottom;
-            marginLeft = props.MarginLeft;
-            marginRight = props.MarginRight;
-        }
-
+        // pgSz
         _writer.WriteStartElement("w", "pgSz", wNs);
-        _writer.WriteAttributeString("w", "w", wNs, pageWidth.ToString());
-        _writer.WriteAttributeString("w", "h", wNs, pageHeight.ToString());
-        if (isLandscape)
-        {
+        int w = section?.PageWidth > 0 ? section.PageWidth : props.PageWidth;
+        int h = section?.PageHeight > 0 ? section.PageHeight : props.PageHeight;
+        _writer.WriteAttributeString("w", "w", wNs, w.ToString());
+        _writer.WriteAttributeString("w", "h", wNs, h.ToString());
+        if (section?.IsLandscape == true || (section == null && props.IsLandscape))
             _writer.WriteAttributeString("w", "orient", wNs, "landscape");
-        }
         _writer.WriteEndElement();
 
+        // pgMar
         _writer.WriteStartElement("w", "pgMar", wNs);
-        _writer.WriteAttributeString("w", "top", wNs, marginTop.ToString());
-        _writer.WriteAttributeString("w", "right", wNs, marginRight.ToString());
-        _writer.WriteAttributeString("w", "bottom", wNs, marginBottom.ToString());
-        _writer.WriteAttributeString("w", "left", wNs, marginLeft.ToString());
-        _writer.WriteAttributeString("w", "header", wNs, "720");
-        _writer.WriteAttributeString("w", "footer", wNs, "720");
-        _writer.WriteAttributeString("w", "gutter", wNs, "0");
+        _writer.WriteAttributeString("w", "top", wNs, (section?.MarginTop != 0 ? section.MarginTop : props.MarginTop).ToString());
+        _writer.WriteAttributeString("w", "right", wNs, (section?.MarginRight != 0 ? section.MarginRight : props.MarginRight).ToString());
+        _writer.WriteAttributeString("w", "bottom", wNs, (section?.MarginBottom != 0 ? section.MarginBottom : props.MarginBottom).ToString());
+        _writer.WriteAttributeString("w", "left", wNs, (section?.MarginLeft != 0 ? section.MarginLeft : props.MarginLeft).ToString());
+        _writer.WriteAttributeString("w", "header", wNs, (section?.HeaderMargin ?? (section == null ? 720 : 0)).ToString());
+        _writer.WriteAttributeString("w", "footer", wNs, (section?.FooterMargin ?? (section == null ? 720 : 0)).ToString());
+        _writer.WriteAttributeString("w", "gutter", wNs, (section?.Gutter ?? 0).ToString());
         _writer.WriteEndElement();
 
         // Mirror margins (left/right swapped on facing pages) – driven by DOP flag.
@@ -1602,10 +1640,44 @@ public class DocumentWriter
         _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         
         WriteParagraphProperties(paragraph.Properties, suppressPageBreakBefore, sectionBreak);
+
+        // Emit w:commentRangeStart for any comments that start at this paragraph
+        if (_commentStartsByParagraph.TryGetValue(paragraph.Index, out var commentStarts))
+        {
+            foreach (var commentId in commentStarts)
+            {
+                _writer.WriteStartElement("w", "commentRangeStart", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteAttributeString("w", "id", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", commentId.ToString());
+                _writer.WriteEndElement();
+            }
+        }
         
         foreach (var run in runsWithContent)
         {
             WriteRun(run);
+        }
+
+        // Emit w:commentRangeEnd and w:r > w:commentReference for any comments that end at this paragraph
+        if (_commentEndsByParagraph.TryGetValue(paragraph.Index, out var commentEnds))
+        {
+            foreach (var commentId in commentEnds)
+            {
+                _writer.WriteStartElement("w", "commentRangeEnd", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteAttributeString("w", "id", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", commentId.ToString());
+                _writer.WriteEndElement();
+
+                // w:r containing w:commentReference
+                _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteStartElement("w", "rPr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteStartElement("w", "rStyle", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteAttributeString("w", "val", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "CommentReference");
+                _writer.WriteEndElement();
+                _writer.WriteEndElement(); // w:rPr
+                _writer.WriteStartElement("w", "commentReference", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                _writer.WriteAttributeString("w", "id", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", commentId.ToString());
+                _writer.WriteEndElement();
+                _writer.WriteEndElement(); // w:r
+            }
         }
         
         _writer.WriteEndElement(); // w:p
@@ -1898,6 +1970,64 @@ public class DocumentWriter
         };
     }
     
+    private static string GetOOXMLRelativeTo(ShapeRelativeTo relativeTo)
+    {
+        return relativeTo switch
+        {
+            ShapeRelativeTo.Margin => "margin",
+            ShapeRelativeTo.Column => "column",
+            ShapeRelativeTo.Paragraph => "paragraph",
+            _ => "page"
+        };
+    }
+
+    private void WriteWrapMode(ShapeWrapType wrapType)
+    {
+        const string wpNs = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+        switch (wrapType)
+        {
+            case ShapeWrapType.Square:
+                _writer.WriteStartElement("wp", "wrapSquare", wpNs);
+                _writer.WriteAttributeString("wrapText", "bothSides");
+                _writer.WriteEndElement();
+                break;
+            case ShapeWrapType.Tight:
+                _writer.WriteStartElement("wp", "wrapTight", wpNs);
+                _writer.WriteAttributeString("wrapText", "bothSides");
+                _writer.WriteStartElement("wp", "wrapPolygon", wpNs);
+                _writer.WriteAttributeString("edited", "0");
+                _writer.WriteStartElement("wp", "start", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "21600"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "21600"); _writer.WriteAttributeString("y", "21600"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "21600"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteEndElement();
+                _writer.WriteEndElement();
+                break;
+            case ShapeWrapType.Through:
+                _writer.WriteStartElement("wp", "wrapThrough", wpNs);
+                _writer.WriteAttributeString("wrapText", "bothSides");
+                _writer.WriteStartElement("wp", "wrapPolygon", wpNs);
+                _writer.WriteAttributeString("edited", "0");
+                _writer.WriteStartElement("wp", "start", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "21600"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "21600"); _writer.WriteAttributeString("y", "21600"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "21600"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteStartElement("wp", "lineTo", wpNs); _writer.WriteAttributeString("x", "0"); _writer.WriteAttributeString("y", "0"); _writer.WriteEndElement();
+                _writer.WriteEndElement();
+                _writer.WriteEndElement();
+                break;
+            case ShapeWrapType.TopBottom:
+                _writer.WriteStartElement("wp", "wrapTopAndBottom", wpNs);
+                _writer.WriteEndElement();
+                break;
+            default:
+                _writer.WriteStartElement("wp", "wrapNone", wpNs);
+                _writer.WriteEndElement();
+                break;
+        }
+    }
+    
     private string GetBorderStyle(BorderStyle style)
     {
         return style switch
@@ -1916,26 +2046,23 @@ public class DocumentWriter
     
     private void WriteTrackChangeStart(string type, RunProperties props)
     {
-        _writer.WriteStartElement("w", type, "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteAttributeString("w", "id", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", (_trackChangeId++).ToString());
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        _writer.WriteStartElement("w", type, wNs);
+        _writer.WriteAttributeString("w", "id", wNs, (_trackChangeId++).ToString());
         
         string author = "Unknown Author";
-        if (type == "ins" && !string.IsNullOrEmpty(props.AuthorIndexIns.ToString())) author = props.AuthorIndexIns.ToString();
-        else if (type == "del" && !string.IsNullOrEmpty(props.AuthorIndexDel.ToString())) author = props.AuthorIndexDel.ToString();
-        _writer.WriteAttributeString("w", "author", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", author);
+        ushort authorIdx = type == "ins" ? props.AuthorIndexIns : props.AuthorIndexDel;
+        if (_document != null && authorIdx < _document.RevisionAuthors.Count)
+        {
+            author = _document.RevisionAuthors[authorIdx];
+        }
+        _writer.WriteAttributeString("w", "author", wNs, author);
         
         uint dttm = type == "ins" ? props.DateIns : props.DateDel;
         if (dttm != 0)
         {
-            try {
-                int mint = (int)(dttm & 0x3F);
-                int hr = (int)((dttm >> 6) & 0x1F);
-                int dom = (int)((dttm >> 11) & 0x1F);
-                int mon = (int)((dttm >> 16) & 0x0F);
-                int yr = 1900 + (int)((dttm >> 20) & 0x1FF);
-                var dt = new DateTime(yr, Math.Max(1, mon), Math.Max(1, dom), hr, mint, 0);
-                _writer.WriteAttributeString("w", "date", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", dt.ToString("yyyy-MM-ddTHH:mm:ssZ"));
-            } catch { }
+            var dt = DttmHelper.ParseDttm(dttm);
+            _writer.WriteAttributeString("w", "date", wNs, dt.ToString("yyyy-MM-ddTHH:mm:ssZ"));
         }
     }
 

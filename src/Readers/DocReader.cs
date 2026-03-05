@@ -33,6 +33,7 @@ public class DocReader : IDisposable
     private FkpParser? _fkpParser;
     private FootnoteReader? _footnoteReader;
     private AnnotationReader? _annotationReader;
+    private SectionReader? _sectionReader;
     private TextboxReader? _textboxReader;
     private HeaderFooterReader? _headerFooterReader;
     private ListReader? _listReader;
@@ -234,13 +235,14 @@ public class DocReader : IDisposable
         _fkpParser = new FkpParser(_wordDocReader!, _tableReader!, _fibReader!, _textReader!);
         _tableParseReader = new TableReader(_wordDocReader!, _tableReader!, _fibReader!, _fkpParser);
         _imageReader = new ImageReader(_wordDocReader!, _dataReader, _fibReader!, _cfb);
-        _footnoteReader = new FootnoteReader(_fibReader!, _textReader!);
+        _footnoteReader = new FootnoteReader(_fibReader!, _textReader!, _fkpParser);
         _annotationReader = new AnnotationReader(_tableReader!, _fibReader!, _textReader!);
-        _textboxReader = new TextboxReader(_tableReader!, _fibReader!, _textReader!);
+        _textboxReader = new TextboxReader(_tableReader!, _fibReader!, _textReader!, _fkpParser);
         _headerFooterReader = new HeaderFooterReader(_tableReader!, _wordDocReader!, _fibReader!, _textReader!);
         _listReader = new ListReader(_tableReader!, _fibReader!);
         _fieldReader = new FieldReader();
         _hyperlinkReader = new HyperlinkReader();
+        _sectionReader = new SectionReader(_tableReader!, _wordDocReader!, _fibReader!);
     }
 
     /// <summary>
@@ -254,6 +256,9 @@ public class DocReader : IDisposable
         // Step 1.5: Read style sheet
         _styleReader!.Read();
         Document.Styles = _styleReader.Styles;
+        
+        // Step 1.6: Read revision authors
+        Document.RevisionAuthors = SttbfHelper.ReadSttbf(_tableReader!, _fibReader.FcSttbfRgtlv, _fibReader.LcbSttbfRgtlv);
 
         // Step 2: Read list definitions
         _listReader!.Read();
@@ -268,6 +273,9 @@ public class DocReader : IDisposable
 
         // Step 4: Parse paragraphs and runs
         ParseDocumentContent();
+
+        // Step 4.5: Parse sections
+        ParseSections();
 
         // Step 5: Parse tables
         _tableParseReader!.ParseTables(Document);
@@ -716,9 +724,51 @@ public class DocReader : IDisposable
                a.FontSize == b.FontSize &&
                a.FontSizeCs == b.FontSizeCs &&
                a.FontIndex == b.FontIndex &&
-               a.Color == b.Color &&
+                a.Color == b.Color &&
                a.HasRgbColor == b.HasRgbColor &&
                a.RgbColor == b.RgbColor;
+    }
+
+    private void ParseSections()
+    {
+        if (_sectionReader == null) return;
+        var sectionInfos = _sectionReader.ReadSections();
+        if (sectionInfos.Count == 0) return;
+
+        // Map CP to paragraph index
+        foreach (var sec in sectionInfos)
+        {
+            sec.StartParagraphIndex = GetParagraphIndexAtCp(sec.StartCp);
+        }
+        
+        Document.Properties.Sections = sectionInfos;
+        
+        // If there are sections, the first section's properties often override the global document ones
+        if (sectionInfos.Count > 0)
+        {
+            var s = sectionInfos[0];
+            Document.Properties.PageWidth = s.PageWidth;
+            Document.Properties.PageHeight = s.PageHeight;
+            Document.Properties.MarginTop = s.MarginTop;
+            Document.Properties.MarginBottom = s.MarginBottom;
+            Document.Properties.MarginLeft = s.MarginLeft;
+            Document.Properties.MarginRight = s.MarginRight;
+        }
+    }
+
+    private int GetParagraphIndexAtCp(int cp)
+    {
+        if (Document.Paragraphs.Count == 0) return 0;
+        // Simple linear search for now
+        for (int i = 0; i < Document.Paragraphs.Count; i++)
+        {
+            var p = Document.Paragraphs[i];
+            if (p.Runs.Count > 0 && p.Runs[0].CharacterPosition >= cp)
+            {
+                return i;
+            }
+        }
+        return Document.Paragraphs.Count - 1;
     }
 
     /// <summary>

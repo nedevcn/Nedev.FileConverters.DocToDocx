@@ -562,7 +562,7 @@ public partial class CfbReader : IDisposable
             _stream.Seek(fileOffset, SeekOrigin.Begin);
             var available = (int)Math.Max(0, _stream.Length - fileOffset);
             if (available > 0)
-                _stream.Read(partial, 0, available);
+                _ = _stream.Read(partial, 0, available);
             return partial;
         }
 

@@ -8,11 +8,16 @@ public class FootnoteReader
 {
     private readonly FibReader _fib;
     private readonly TextReader _textReader;
+    private readonly FkpParser? _fkpParser;
+    private readonly StyleSheet? _styles;
 
-    public FootnoteReader(FibReader fib, TextReader textReader)
+    public FootnoteReader(FibReader fib, TextReader textReader,
+                          FkpParser? fkpParser = null, StyleSheet? styles = null)
     {
         _fib = fib;
         _textReader = textReader;
+        _fkpParser = fkpParser;
+        _styles = styles;
     }
 
     public List<FootnoteModel> ReadFootnotes()
@@ -58,8 +63,7 @@ public class FootnoteReader
         var notes = new List<T>();
 
         // PLCF Structure: (n+1) CPs + n references
-        // In Word 97+, footnote references (FRD) are 2 bytes? 
-        // No, MS-DOC §2.8.2: Each entry in the PLCF is a FRD (2 bytes).
+        // MS-DOC §2.8.2: Each entry in the PLCF is a FRD (2 bytes).
         // PLC structure: (n+1)*4 + n*2 = 6n + 4
         if (lcb < 10) return notes;
 
@@ -90,11 +94,30 @@ public class FootnoteReader
 
             if (!string.IsNullOrEmpty(noteText))
             {
+                // Try to get actual CHP formatting from FkpParser
+                RunProperties? runProps = null;
+                if (_fkpParser != null && _styles != null)
+                {
+                    try
+                    {
+                        var chp = _fkpParser.GetChpAtCp(absoluteStartCp);
+                        if (chp != null)
+                        {
+                            runProps = _fkpParser.ConvertToRunProperties(chp, _styles);
+                        }
+                    }
+                    catch
+                    {
+                        // Fall through to default
+                    }
+                }
+
                 var run = new RunModel
                 {
                     Text = noteText,
                     CharacterPosition = relStart,
-                    CharacterLength = noteText.Length
+                    CharacterLength = noteText.Length,
+                    Properties = runProps ?? new RunProperties()
                 };
                 note.Runs.Add(run);
 

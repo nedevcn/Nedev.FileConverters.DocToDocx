@@ -279,8 +279,15 @@ public static class OfficeArtMapper
     /// </summary>
     private static ShapeRelativeTo MapRelativeToHorizontal(ushort flags)
     {
-        // TODO: refine based on full MS-DOC FSPA specification and real-world docs.
-        return ShapeRelativeTo.Page;
+        // bits 1-2: bx (0=page, 1=margin, 2=column, 3=char)
+        int bx = (flags >> 1) & 0x03;
+        return bx switch
+        {
+            1 => ShapeRelativeTo.Margin,
+            2 => ShapeRelativeTo.Column,
+            3 => ShapeRelativeTo.Column, // character not fully supported, map to column
+            _ => ShapeRelativeTo.Page
+        };
     }
 
     /// <summary>
@@ -289,8 +296,15 @@ public static class OfficeArtMapper
     /// </summary>
     private static ShapeRelativeTo MapRelativeToVertical(ushort flags)
     {
-        // TODO: refine based on full MS-DOC FSPA specification and real-world docs.
-        return ShapeRelativeTo.Page;
+        // bits 3-4: by (0=page, 1=margin, 2=paragraph, 3=line)
+        int by = (flags >> 3) & 0x03;
+        return by switch
+        {
+            1 => ShapeRelativeTo.Margin,
+            2 => ShapeRelativeTo.Paragraph,
+            3 => ShapeRelativeTo.Paragraph, // line not fully supported, map to paragraph
+            _ => ShapeRelativeTo.Page
+        };
     }
 
     /// <summary>
@@ -300,8 +314,19 @@ public static class OfficeArtMapper
     /// </summary>
     private static ShapeWrapType MapWrapType(ushort flags)
     {
-        // TODO: inspect real FSPA samples and MS-DOC to distinguish wrapNone vs wrapSquare.
-        return ShapeWrapType.Square;
+        // bits 5-7: wr (0=none (behind/ahead), 1=tight, 2=through, 3=square, 4=none (above))
+        int wr = (flags >> 5) & 0x07;
+        bool fBelowText = (flags & 0x2000) != 0; // bit 13
+
+        return wr switch
+        {
+            0 => fBelowText ? ShapeWrapType.BehindText : ShapeWrapType.InFrontOfText,
+            1 => ShapeWrapType.Tight,
+            2 => ShapeWrapType.Through,
+            3 => ShapeWrapType.Square,
+            4 => ShapeWrapType.TopBottom,
+            _ => ShapeWrapType.Square
+        };
     }
 }
 

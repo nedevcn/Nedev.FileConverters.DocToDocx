@@ -43,15 +43,11 @@ public class CommentsWriter
                 _writer.WriteAttributeString("w", "date", null, annotation.Date.ToString("yyyy-MM-ddTHH:mm:ssZ"));
             }
 
-            // Paragraph inside comment
-            var docWriter = new DocumentWriter(_writer);
+            // Write paragraphs with proper formatting
             if (annotation.Paragraphs.Count > 0)
             {
                 foreach (var paragraph in annotation.Paragraphs)
                 {
-                    // Needs to be public or internal method, assuming WriteParagraph is available?
-                    // But DocumentWriter.WriteParagraph is private. If it's private, we must duplicate logic or make it internal.
-                    // For now, write a simple w:p for the first phase compatibility.
                     _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                     _writer.WriteStartElement("w", "pPr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                     _writer.WriteStartElement("w", "pStyle", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -64,14 +60,13 @@ public class CommentsWriter
                         if (string.IsNullOrEmpty(run.Text)) continue;
                         
                         _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-                        _writer.WriteStartElement("w", "rPr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-                        _writer.WriteStartElement("w", "rStyle", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-                        _writer.WriteAttributeString("w", "val", null, "CommentReference");
-                        _writer.WriteEndElement();
-                        _writer.WriteEndElement();
                         
-                        // write text directly
+                        // Write run properties if available
+                        WriteCommentRunProperties(run);
+                        
+                        // write text
                         _writer.WriteStartElement("w", "t", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                        _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
                         _writer.WriteString(run.Text);
                         _writer.WriteEndElement();
                         
@@ -101,5 +96,80 @@ public class CommentsWriter
 
         _writer.WriteEndElement(); // w:comments
         _writer.WriteEndDocument();
+    }
+
+    private void WriteCommentRunProperties(RunModel run)
+    {
+        var props = run.Properties;
+        if (props == null) return;
+
+        bool hasProps = props.IsBold || props.IsItalic || props.IsUnderline ||
+                       props.IsStrikeThrough || props.IsSuperscript || props.IsSubscript ||
+                       props.IsSmallCaps || props.IsAllCaps || props.Color != 0 ||
+                       props.HasRgbColor || props.HighlightColor != 0 ||
+                       !string.IsNullOrEmpty(props.FontName) || props.FontSize != 24;
+
+        if (!hasProps) return;
+
+        _writer.WriteStartElement("w", "rPr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+
+        if (!string.IsNullOrEmpty(props.FontName))
+        {
+            _writer.WriteStartElement("w", "rFonts", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "ascii", null, props.FontName);
+            _writer.WriteAttributeString("w", "hAnsi", null, props.FontName);
+            _writer.WriteEndElement();
+        }
+        if (props.IsBold)
+        {
+            _writer.WriteStartElement("w", "b", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+        if (props.IsItalic)
+        {
+            _writer.WriteStartElement("w", "i", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+        if (props.IsUnderline)
+        {
+            _writer.WriteStartElement("w", "u", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", null, "single");
+            _writer.WriteEndElement();
+        }
+        if (props.IsStrikeThrough)
+        {
+            _writer.WriteStartElement("w", "strike", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+        if (props.IsSmallCaps)
+        {
+            _writer.WriteStartElement("w", "smallCaps", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+        if (props.IsAllCaps)
+        {
+            _writer.WriteStartElement("w", "caps", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteEndElement();
+        }
+        if (props.HasRgbColor)
+        {
+            _writer.WriteStartElement("w", "color", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", null, Utils.ColorHelper.RgbToHex(props.RgbColor));
+            _writer.WriteEndElement();
+        }
+        else if (props.Color > 0)
+        {
+            _writer.WriteStartElement("w", "color", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", null, Utils.ColorHelper.ColorToHex(props.Color));
+            _writer.WriteEndElement();
+        }
+        if (props.FontSize != 24)
+        {
+            _writer.WriteStartElement("w", "sz", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+            _writer.WriteAttributeString("w", "val", null, props.FontSize.ToString());
+            _writer.WriteEndElement();
+        }
+
+        _writer.WriteEndElement(); // w:rPr
     }
 }

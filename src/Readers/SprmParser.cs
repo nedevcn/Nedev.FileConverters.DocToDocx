@@ -57,6 +57,25 @@ public class SprmParser
         }
     }
 
+    public void ApplyToSep(byte[] grpprl, SepBase sep)
+    {
+        if (grpprl == null || grpprl.Length == 0) return;
+        using var ms = new MemoryStream(grpprl);
+        using var reader = new BinaryReader(ms, Encoding.Default, true);
+        while (ms.Position < ms.Length)
+        {
+            try
+            {
+                var sprm = ReadSprm(reader);
+                ApplySepSprm(sprm, sep);
+            }
+            catch (EndOfStreamException)
+            {
+                break;
+            }
+        }
+    }
+
     private Sprm ReadSprm(BinaryReader reader)
     {
         var sprm = new Sprm();
@@ -514,6 +533,32 @@ public class SprmParser
         };
     }
 
+    private void ApplySepSprm(Sprm sprm, SepBase sep)
+    {
+        // bits 13-15 = sgc. For Section, sgc = 4.
+        var sgc = (sprm.Code >> 13) & 0x07;
+        if (sgc != 4) return;
+
+        var sprmCode = sprm.Code & 0x01FF;
+        switch (sprmCode)
+        {
+            case 0x00: sep.BreakCode = (byte)sprm.Operand; break; // sprmSBkc
+            case 0x01: sep.TitlePage = sprm.Operand != 0; break; // sprmSFTitlePage
+            case 0x02: sep.ColumnCount = (short)(sprm.Operand + 1); break; // sprmSCColumns
+            case 0x03: sep.ColumnSpacing = (int)(short)sprm.Operand; break; // sprmSDxaColumns
+            case 0x0F: sep.PageWidth = (int)(short)sprm.Operand; break; // sprmSDxaPage
+            case 0x10: sep.PageHeight = (int)(short)sprm.Operand; break; // sprmSDyaPage
+            case 0x11: sep.MarginLeft = (int)(short)sprm.Operand; break; // sprmSDxaLeft
+            case 0x12: sep.MarginRight = (int)(short)sprm.Operand; break; // sprmSDxaRight
+            case 0x13: sep.MarginTop = (int)(short)sprm.Operand; break; // sprmSDyaTop
+            case 0x14: sep.MarginBottom = (int)(short)sprm.Operand; break; // sprmSDyaBottom
+            case 0x15: sep.MarginHeader = (int)(short)sprm.Operand; break; // sprmSDzaHdrTop
+            case 0x16: sep.MarginFooter = (int)(short)sprm.Operand; break; // sprmSDzaHdrBottom
+            case 0x17: sep.Gutter = (int)(short)sprm.Operand; break; // sprmSDxaGutter
+            case 0x2A: sep.VerticalAlignment = (byte)sprm.Operand; break; // sprmSVjc
+        }
+    }
+
     private class Sprm
     {
         public ushort Code { get; set; }
@@ -685,4 +730,22 @@ public class CellMergeFlags
 
     /// <summary>True if this cell is vertically merged into a cell above.</summary>
     public bool VertMerged { get; set; }
+}
+
+public class SepBase
+{
+    public byte BreakCode { get; set; } // SBkc (0=cont, 1=col, 2=page, 3=even, 4=odd)
+    public bool TitlePage { get; set; } // SFTitlePage
+    public short ColumnCount { get; set; } = 1; // SCColumns
+    public int ColumnSpacing { get; set; } // SDxaColumns
+    public int PageWidth { get; set; } = 11906; // 21cm (A4)
+    public int PageHeight { get; set; } = 16838; // 29.7cm (A4)
+    public int MarginLeft { get; set; } = 1440; // 1"
+    public int MarginRight { get; set; } = 1440;
+    public int MarginTop { get; set; } = 1440;
+    public int MarginBottom { get; set; } = 1440;
+    public int MarginHeader { get; set; } = 720;
+    public int MarginFooter { get; set; } = 720;
+    public int Gutter { get; set; }
+    public byte VerticalAlignment { get; set; } // SVjc (0=top, 1=center, 2=justified, 3=bottom)
 }

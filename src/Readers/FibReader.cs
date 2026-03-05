@@ -116,6 +116,8 @@ public class FibReader
     public uint LcbSttbfFfn { get; private set; }
     public uint FcDop { get; private set; }
     public uint LcbDop { get; private set; }
+    public uint FcSttbfRgtlv { get; private set; }
+    public uint LcbSttbfRgtlv { get; private set; }
 
     // Legacy Aliases for compatibility with older code
     public uint StshOffset => FcStshf;
@@ -215,7 +217,6 @@ public class FibReader
         }
 
         (FcStshf, LcbStshf)             = GetFcLcb(0);
-        (FcPlcfSed, LcbPlcfSed)         = GetFcLcb(2);
         (FcPlcfFldMom, LcbPlcfFldMom)   = GetFcLcb(4);
         (FcPlcffndRef, LcbPlcffndRef)   = GetFcLcb(8);
         (FcPlcffndTxt, LcbPlcffndTxt)   = GetFcLcb(9);
@@ -250,6 +251,8 @@ public class FibReader
         (FcData, LcbData)               = GetFcLcb(46);
         (FcSttbfFfn, LcbSttbfFfn)       = GetFcLcb(IndexSttbfFfn());
         (FcDop, LcbDop)                 = GetFcLcb(IndexDop());
+        (FcSttbfRgtlv, LcbSttbfRgtlv)   = GetFcLcb(47);
+        (FcPlcfSed, LcbPlcfSed)         = GetFcLcb(33);
 
         if (cbRgFcLcb > 89)
         {

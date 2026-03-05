@@ -214,7 +214,8 @@ public enum ListType
 {
     Bullet,
     Numbered,
-    Outline
+    Outline,
+    Simple
 }
 
 /// <summary>
@@ -228,6 +229,7 @@ public class ListLevel
     public int StartAt { get; set; } = 1;
     public int Indent { get; set; }
     public int Space { get; set; }
+    public int Alignment { get; set; }
     public byte[]? NumberTextBytes { get; set; }
     public ParagraphProperties? ParagraphProperties { get; set; }
     public RunProperties? RunProperties { get; set; }
@@ -279,7 +281,17 @@ public enum NumberFormat
     ChineseLegalTraditional = 41,
     JapaneseCounting2 = 42,
     JapaneseDigitalHundredCount = 43,
-    JapaneseDigitalThousandCount = 44
+    JapaneseDigitalThousandCount = 44,
+    // Additional formats used by ListReader nfc mapping
+    OrdinalNumber = 45,
+    ChineseCountingThousand = 46,
+    KoreanDigital = 47,
+    KoreanCounting = 48,
+    Hebrew1 = 49,
+    Hebrew2 = 50,
+    ArabicAlpha = 51,
+    ArabicAbjad = 52,
+    HindiVowels = 53
 }
 
 /// <summary>

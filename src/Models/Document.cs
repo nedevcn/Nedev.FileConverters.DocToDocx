@@ -32,6 +32,7 @@ public class DocumentModel
     public HeaderFooterInfo HeadersFooters { get; set; } = new();
     public List<NumberingDefinition> NumberingDefinitions { get; set; } = new();
     public List<ListFormat> ListFormats { get; set; } = new();
+    public List<string> RevisionAuthors { get; set; } = new();
 }
 
 /// <summary>
@@ -113,14 +114,23 @@ public class DocumentProperties
 /// </summary>
 public class SectionInfo
 {
+    public int StartCp { get; set; }
+    public int EndCp { get; set; }
     public int StartParagraphIndex { get; set; }
-    public int PageWidth { get; set; }
-    public int PageHeight { get; set; }
-    public int MarginTop { get; set; }
-    public int MarginBottom { get; set; }
-    public int MarginLeft { get; set; }
-    public int MarginRight { get; set; }
+    public int PageWidth { get; set; } = 11906; // A4
+    public int PageHeight { get; set; } = 16838; // A4
+    public int MarginTop { get; set; } = 1440;
+    public int MarginBottom { get; set; } = 1440;
+    public int MarginLeft { get; set; } = 1440;
+    public int MarginRight { get; set; } = 1440;
+    public int HeaderMargin { get; set; } = 720;
+    public int FooterMargin { get; set; } = 720;
+    public int Gutter { get; set; }
     public bool IsLandscape { get; set; }
+    public byte BreakCode { get; set; } // SBkc
+    public short ColumnCount { get; set; } = 1;
+    public int ColumnSpacing { get; set; }
+    public byte VerticalAlignment { get; set; } // SVjc
     public HeaderFooterReferenceType HeaderReference { get; set; }
     public HeaderFooterReferenceType FooterReference { get; set; }
 }
@@ -367,7 +377,12 @@ public enum ShapeRelativeTo
 public enum ShapeWrapType
 {
     None,
-    Square
+    Square,
+    Tight,
+    Through,
+    TopBottom,
+    BehindText,
+    InFrontOfText
 }
 
 /// <summary>

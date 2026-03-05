@@ -96,7 +96,7 @@ public class AnnotationReader
                 Id = i.ToString(),
                 StartCharacterPosition = anchorCps[i],
                 EndCharacterPosition = anchorCps[i], // For now, single-point anchor
-                Date = ParseDttm(dttms[i]),
+                Date = DttmHelper.ParseDttm(dttms[i]),
                 Author = (authorIndices[i] >= 0 && authorIndices[i] < authors.Count) ? authors[authorIndices[i]] : "Unknown"
             };
 
@@ -133,33 +133,7 @@ public class AnnotationReader
 
     private List<string> ReadAuthors()
     {
-        var authors = new List<string>();
-        if (_fib.FcSttbfAtnMod == 0 || _fib.LcbSttbfAtnMod == 0) return authors;
-
-        _tableReader.BaseStream.Seek(_fib.FcSttbfAtnMod, SeekOrigin.Begin);
-        ushort fExtend = _tableReader.ReadUInt16();
-        bool isExtended = fExtend == 0xFFFF;
-        int cData = isExtended ? _tableReader.ReadUInt16() : fExtend;
-        
-        if (isExtended) _tableReader.ReadUInt16(); // cbExtra
-
-        for (int i = 0; i < cData; i++)
-        {
-            if (_tableReader.BaseStream.Position >= _fib.FcSttbfAtnMod + _fib.LcbSttbfAtnMod) break;
-
-            int len = isExtended ? _tableReader.ReadUInt16() : _tableReader.ReadByte();
-            if (len == 0) 
-            {
-                authors.Add(string.Empty);
-                continue;
-            }
-
-            byte[] bytes = _tableReader.ReadBytes(isExtended ? len * 2 : len);
-            string name = isExtended ? Encoding.Unicode.GetString(bytes) : Encoding.Default.GetString(bytes);
-            authors.Add(name.TrimEnd('\0'));
-        }
-
-        return authors;
+        return SttbfHelper.ReadSttbf(_tableReader, _fib.FcSttbfAtnMod, _fib.LcbSttbfAtnMod);
     }
 
     private void RefineAnnotationRanges(List<AnnotationModel> annotations)
@@ -203,22 +177,5 @@ public class AnnotationReader
         }
     }
 
-    private DateTime ParseDttm(uint dttm)
-    {
-        if (dttm == 0) return DateTime.Now;
-        try 
-        {
-            int mint = (int)(dttm & 0x3F);
-            int hr = (int)((dttm >> 6) & 0x1F);
-            int dom = (int)((dttm >> 11) & 0x1F);
-            int mon = (int)((dttm >> 16) & 0x0F);
-            int yr = 1900 + (int)((dttm >> 20) & 0x1FF);
-            return new DateTime(yr, Math.Max(1, mon), Math.Max(1, dom), hr, mint, 0);
-        } 
-        catch 
-        {
-            return DateTime.Now;
-        }
-    }
 }
 

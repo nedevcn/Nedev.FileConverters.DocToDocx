@@ -9,12 +9,17 @@ public class TextboxReader
     private readonly BinaryReader _tableReader;
     private readonly FibReader _fib;
     private readonly TextReader _textReader;
+    private readonly FkpParser? _fkpParser;
+    private readonly StyleSheet? _styles;
 
-    public TextboxReader(BinaryReader tableReader, FibReader fib, TextReader textReader)
+    public TextboxReader(BinaryReader tableReader, FibReader fib, TextReader textReader,
+                         FkpParser? fkpParser = null, StyleSheet? styles = null)
     {
         _tableReader = tableReader;
         _fib = fib;
         _textReader = textReader;
+        _fkpParser = fkpParser;
+        _styles = styles;
     }
 
     public List<TextboxModel> ReadTextboxes()
@@ -42,8 +47,7 @@ public class TextboxReader
 
         // PLCFTxbxBkd (fcTxbx) contains boundaries in the textbox story
         // Each entry is 8 bytes (FTXBX)
-        if (_fib.LcbTxbx < 12) // Minimum: 2 CPs (8 bytes) + 1 FTXBX (8 bytes) = 16 bytes? 
-                                // Actually PLC structure: (n+1)*4 + n*dataSize
+        if (_fib.LcbTxbx < 12) // Minimum: PLC structure: (n+1)*4 + n*dataSize
             return textboxes;
 
         _tableReader.BaseStream.Seek(_fib.FcTxbx, SeekOrigin.Begin);
@@ -53,9 +57,6 @@ public class TextboxReader
 
         var cpArray = new int[n + 1];
         for (int i = 0; i <= n; i++) cpArray[i] = _tableReader.ReadInt32();
-
-        // Skip FTXBX descriptors for now (or read if needed)
-        // _tableReader.BaseStream.Seek(n * 8, SeekOrigin.Current);
 
         // Calculate absolute CP offset for textboxes:
         // Textbox story starts after Body, Footnotes, Headers, Annotations, Endnotes
@@ -77,17 +78,21 @@ public class TextboxReader
             };
 
             // Pull text from global TextReader using absolute CP
-            var textboxText = _textReader.GetText(textboxStoryStartCp + relStart, length);
+            int absCp = textboxStoryStartCp + relStart;
+            var textboxText = _textReader.GetText(absCp, length);
 
             if (!string.IsNullOrEmpty(textboxText))
             {
-                var runs = ParseTextboxRuns(textboxText, textboxStoryStartCp + relStart);
-                textbox.Runs.AddRange(runs);
-
-                var paragraphs = ParseTextboxParagraphs(textboxText);
+                var paragraphs = ParseTextboxParagraphs(textboxText, absCp);
                 foreach (var para in paragraphs)
                 {
                     textbox.Paragraphs.Add(para);
+                }
+
+                // Also populate Runs (flat list) from paragraphs
+                foreach (var para in paragraphs)
+                {
+                    textbox.Runs.AddRange(para.Runs);
                 }
             }
 
@@ -97,71 +102,59 @@ public class TextboxReader
         return textboxes;
     }
 
-    private List<RunModel> ParseTextboxRuns(string text, int startCp)
-    {
-        var runs = new List<RunModel>();
-        if (string.IsNullOrEmpty(text))
-            return runs;
-
-        var paragraphs = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-        int cp = startCp;
-
-        foreach (var para in paragraphs)
-        {
-            if (!string.IsNullOrWhiteSpace(para))
-            {
-                runs.Add(new RunModel
-                {
-                    Text = para.Trim(),
-                    CharacterPosition = cp,
-                    CharacterLength = para.Trim().Length,
-                    Properties = new RunProperties { FontSize = 24 }
-                });
-                cp += para.Length;
-            }
-        }
-
-        if (runs.Count == 0 && !string.IsNullOrWhiteSpace(text))
-        {
-            runs.Add(new RunModel
-            {
-                Text = text.Trim(),
-                CharacterPosition = startCp,
-                CharacterLength = text.Length,
-                Properties = new RunProperties { FontSize = 24 }
-            });
-        }
-
-        return runs;
-    }
-
-    private List<ParagraphModel> ParseTextboxParagraphs(string text)
+    private List<ParagraphModel> ParseTextboxParagraphs(string text, int startCp)
     {
         var paragraphs = new List<ParagraphModel>();
         if (string.IsNullOrEmpty(text))
             return paragraphs;
 
-        var lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+        // Split by paragraph marks, tracking CP positions
+        var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         int paraIndex = 0;
+        int currentCp = startCp;
 
         foreach (var line in lines)
         {
-            if (!string.IsNullOrWhiteSpace(line))
+            if (string.IsNullOrWhiteSpace(line))
             {
-                var paragraph = new ParagraphModel
-                {
-                    Index = paraIndex++,
-                    Type = ParagraphType.Normal
-                };
-
-                paragraph.Runs.Add(new RunModel
-                {
-                    Text = line.Trim(),
-                    Properties = new RunProperties { FontSize = 24 }
-                });
-
-                paragraphs.Add(paragraph);
+                currentCp += line.Length + 1; // +1 for the delimiter
+                continue;
             }
+
+            var paragraph = new ParagraphModel
+            {
+                Index = paraIndex++,
+                Type = ParagraphType.Normal
+            };
+
+            // Try to get actual CHP properties from FkpParser
+            RunProperties? runProps = null;
+            if (_fkpParser != null && _styles != null)
+            {
+                try
+                {
+                    var chp = _fkpParser.GetChpAtCp(currentCp);
+                    if (chp != null)
+                    {
+                        runProps = _fkpParser.ConvertToRunProperties(chp, _styles);
+                    }
+                }
+                catch
+                {
+                    // Fall through to default properties
+                }
+            }
+
+            paragraph.Runs.Add(new RunModel
+            {
+                Text = line.Trim(),
+                CharacterPosition = currentCp,
+                CharacterLength = line.Trim().Length,
+                Properties = runProps ?? new RunProperties()
+            });
+
+            paragraphs.Add(paragraph);
+            currentCp += line.Length + 1; // +1 for paragraph separator
         }
 
         return paragraphs;
