@@ -12,7 +12,9 @@ A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party
 - **OfficeArt pictures & floating anchors**: Parses Escher/OfficeArt records and FSPA anchors from `PlcSpaMom` to recover picture shapes; maps them to `wp:anchor` floating images positioned relative to the page, falling back to inline images when anchors are unavailable.
 - **Basic charts (experimental)**: When `.doc` files contain embedded OLE chart-like streams, the converter can emit minimal, editable DOCX chart parts (`word/charts/chartN.xml`) with placeholder data, so charts remain editable in Word even if the original series data is not yet fully understood.
 - **Footnotes, endnotes, comments, textboxes**: Reads and writes common note and annotation structures into DOCX footnotes/endnotes parts and DrawingML textboxes.
-- **Encryption (XOR)**: Supports Word’s XOR‑obfuscated streams via `EncryptionHelper` and decrypted CFB streams.
+- **Encryption**:
+  - **XOR**: Supports Word’s XOR‑obfuscated streams via `EncryptionHelper` and decrypted CFB streams.
+  - **RC4 (Passworded)**: Handles Office 97‑2003 RC4‑encrypted documents. The converter will prompt for a password and verify it against the verifier/hash; incorrect passwords are rejected. Full RC4 decryption is performed on the `WordDocument`, `Table`, and `Data` streams.
 - **No external dependencies**: Pure .NET, streaming writers (`XmlWriter`) for high performance and low memory usage.
 
 > Note: While many MS‑DOC features are implemented (including OfficeArt‑based picture extraction and floating anchors), the converter does not yet claim 100% coverage of the full [MS‑DOC] / [MS‑ODRAW] specifications. Complex vector shapes, SmartArt, charts, OLE objects, and some rare formatting cases remain intentionally out of scope for now.
@@ -43,8 +45,10 @@ DocToDocxConverter.Convert("input.doc", "output.docx");
 You can also use the included CLI tool to convert documents directly from the command line:
 
 ```bash
-Nedev.DocToDocx.Cli <input.doc> <output.docx> [-p <password>]
+Nedev.DocToDocx.Cli <input.doc|input.docx|inputDir> <output.docx|outputDir> [-p <password>] [-r]
 ```
+
+When given a `.doc` file the tool will perform a conversion; a `.docx` input is simply copied to the output location (useful for batch scripts). The CLI also understands password-protected `.doc` files (`-p`), verifying the password before attempting to read.
 
 **Arguments:**
 - `<input.doc>` The path to the input MS-DOC file.
@@ -58,12 +62,12 @@ Nedev.DocToDocx.Cli <input.doc> <output.docx> [-p <password>]
 
 ### Running the tests
 
-The repository now ships with a set of unit and integration tests under `tests/Nedev.DocToDocx.Tests`.
+The repository now ships with a set of unit and integration tests under `src/Nedev.DocToDocx.Tests`.
 Sample `.doc`/`.docx` files are included and copied to the test output directory so that
 integration tests can exercise the reader and CLI tool. To run the tests execute:
 
 ```bash
-cd tests/Nedev.DocToDocx.Tests
+cd src/Nedev.DocToDocx.Tests
 dotnet test
 ```
 

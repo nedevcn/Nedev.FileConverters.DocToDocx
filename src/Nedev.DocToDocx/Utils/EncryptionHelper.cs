@@ -126,9 +126,9 @@ public static class EncryptionHelper
 
                 // Base key = MD5(password + salt)
                 byte[] passwordBytes = Encoding.Unicode.GetBytes(password);
-                byte[] passwordAndSalt = new byte[passwordBytes.Length + 16];
+                byte[] passwordAndSalt = new byte[passwordBytes.Length + salt.Length];
                 Buffer.BlockCopy(passwordBytes, 0, passwordAndSalt, 0, passwordBytes.Length);
-                Buffer.BlockCopy(salt, 0, passwordAndSalt, passwordBytes.Length, 16);
+                Buffer.BlockCopy(salt, 0, passwordAndSalt, passwordBytes.Length, salt.Length);
 
                 byte[] baseKey;
                 using (var md5 = MD5.Create())
@@ -136,7 +136,27 @@ public static class EncryptionHelper
                     baseKey = md5.ComputeHash(passwordAndSalt);
                 }
 
-                // Verify (simplified for now - just return baseKey with MD5 flag)
+                // Decrypt verifier and verifier hash using RC4 with baseKey
+                var cipher = new Rc4Cipher();
+                cipher.Initialize(baseKey);
+                byte[] verifier = new byte[16];
+                cipher.TransformBlock(encryptedVerifier, 0, 16, verifier, 0);
+                byte[] verifierHash = new byte[16];
+                cipher.TransformBlock(encryptedVerifierHash, 0, 16, verifierHash, 0);
+
+                // Compute MD5 of decrypted verifier and compare
+                byte[] actualHash;
+                using (var md5 = MD5.Create())
+                {
+                    actualHash = md5.ComputeHash(verifier);
+                }
+
+                if (!actualHash.SequenceEqual(verifierHash))
+                {
+                    // password mismatch
+                    return null;
+                }
+
                 return new DecryptionContext { BaseKey = baseKey, UseSha1 = false };
             }
 

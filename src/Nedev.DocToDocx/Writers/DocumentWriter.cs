@@ -169,6 +169,12 @@ public partial class DocumentWriter
         _writer.WriteStartDocument();
         _writer.WriteStartElement("w", "document", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         
+        // ensure there is at least a default section so writer has something to work with
+        if (document.Properties.Sections.Count == 0)
+        {
+            document.Properties.Sections.Add(new SectionInfo());
+        }
+        
         // Add XML namespace definitions
         _writer.WriteAttributeString("xmlns", "w", null, "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");

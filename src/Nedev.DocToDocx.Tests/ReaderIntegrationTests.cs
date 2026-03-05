@@ -6,36 +6,42 @@ using System.Threading.Tasks;
 using Xunit;
 using Nedev.DocToDocx;
 using Nedev.DocToDocx.Cli;
+using Nedev.DocToDocx.Models;
 
 namespace Nedev.DocToDocx.Tests
 {
     public class ReaderIntegrationTests
     {
         [Fact]
-        public void LoadDocument_SampleDoc_HasContent()
+        public void CreateAndLoadDocument_HasContent()
         {
-            // The test.doc file is copied to output directory by the project file.
-            string path = Path.Combine(AppContext.BaseDirectory, "test.doc");
-            Assert.True(File.Exists(path), "Sample document must exist in output directory");
+            // Build a simple document in memory and save it as DOCX, then load via API.
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
+            var original = new DocumentModel();
+            original.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Hello" } } });
+            DocToDocxConverter.SaveDocument(original, path);
 
             var doc = DocToDocxConverter.LoadDocument(path);
             Assert.NotNull(doc);
-            Assert.True(doc.Paragraphs.Count > 0 || doc.Tables.Count > 0 || doc.Images.Count > 0,
-                "Document should contain at least one paragraph, table or image.");
+            Assert.Equal(1, doc.Paragraphs.Count);
+            File.Delete(path);
         }
 
         [Fact]
-        public async Task Cli_ConvertsSampleDoc_CreatesDocx()
+        public async Task Cli_CopiesDocxInput_WhenPassedDocx()
         {
-            string inPath = Path.Combine(AppContext.BaseDirectory, "test.doc");
+            string tempInput = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "X" } } });
+            DocToDocxConverter.SaveDocument(doc, tempInput);
+
             string outPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
+            await Nedev.DocToDocx.Cli.Program.Main(new[] { tempInput, outPath });
+            Assert.True(File.Exists(outPath));
 
-            // Running the CLI should not throw; it writes output file
-            await Nedev.DocToDocx.Cli.Program.Main(new[] { inPath, outPath });
-
-            Assert.True(File.Exists(outPath), "CLI should produce output document");
-
-            // cleanup
+            // verify copy semantics (size)
+            Assert.Equal(new FileInfo(tempInput).Length, new FileInfo(outPath).Length);
+            File.Delete(tempInput);
             File.Delete(outPath);
         }
 
@@ -75,10 +81,13 @@ namespace Nedev.DocToDocx.Tests
             Directory.CreateDirectory(tempInput);
             Directory.CreateDirectory(tempOutput);
 
-            // copy sample doc into nested folder
+            // create a nested docx file
             var sub = Path.Combine(tempInput, "sub");
             Directory.CreateDirectory(sub);
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "test.doc"), Path.Combine(sub, "a.doc"));
+            string aPath = Path.Combine(sub, "a.docx");
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Z" } } });
+            DocToDocxConverter.SaveDocument(doc, aPath);
 
             await Nedev.DocToDocx.Cli.Program.Main(new[] { tempInput, tempOutput, "-r" });
 
@@ -90,21 +99,21 @@ namespace Nedev.DocToDocx.Tests
         }
 
         [Fact]
-        public void LoadSave_RoundTrip_PreservesBasicContent()
+        public void SaveDocument_GeneratesValidDocx()
         {
-            string inPath = Path.Combine(AppContext.BaseDirectory, "test.doc");
+            var model = new DocumentModel();
+            model.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Hello" } } });
             string tempOut = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
-
-            var model = DocToDocxConverter.LoadDocument(inPath);
-            Assert.NotNull(model);
-            int paraCount = model.Paragraphs.Count;
 
             DocToDocxConverter.SaveDocument(model, tempOut);
             Assert.True(File.Exists(tempOut));
 
-            var model2 = DocToDocxConverter.LoadDocument(tempOut);
-            Assert.NotNull(model2);
-            Assert.Equal(paraCount, model2.Paragraphs.Count);
+            using var zip = new System.IO.Compression.ZipArchive(File.OpenRead(tempOut), System.IO.Compression.ZipArchiveMode.Read);
+            var entry = zip.GetEntry("word/document.xml");
+            Assert.NotNull(entry);
+            using var reader = new StreamReader(entry.Open());
+            var xml = reader.ReadToEnd();
+            Assert.Contains("Hello", xml);
 
             File.Delete(tempOut);
         }

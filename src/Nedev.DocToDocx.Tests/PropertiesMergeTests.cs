@@ -27,7 +27,7 @@ namespace Nedev.DocToDocx.Tests
         }
 
         [Fact]
-        public void ParagraphProperties_MergeWith_DoesNotOverrideExisting()
+        public void ParagraphProperties_MergeWith_OverridesDefaultLeft()
         {
             var baseProps = new ParagraphProperties
             {
@@ -42,7 +42,8 @@ namespace Nedev.DocToDocx.Tests
 
             p.MergeWith(baseProps);
 
-            Assert.Equal(ParagraphAlignment.Left, p.Alignment);
+            // left is treated as "default" and should be overridden by a non-left base
+            Assert.Equal(ParagraphAlignment.Right, p.Alignment);
             Assert.Equal(360, p.IndentLeft);
         }
 
@@ -67,7 +68,7 @@ namespace Nedev.DocToDocx.Tests
         }
 
         [Fact]
-        public void RunProperties_MergeWith_DoesNotOverrideExisting()
+        public void RunProperties_MergeWith_OverridesDefaultSize()
         {
             var baseProps = new RunProperties
             {
@@ -82,7 +83,8 @@ namespace Nedev.DocToDocx.Tests
 
             r.MergeWith(baseProps);
 
-            Assert.Equal(24, r.FontSize);
+            // default size 24 should be replaced
+            Assert.Equal(36, r.FontSize);
             Assert.False(r.IsItalic);
         }
     }

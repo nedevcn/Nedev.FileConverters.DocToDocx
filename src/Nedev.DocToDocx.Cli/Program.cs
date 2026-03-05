@@ -5,9 +5,9 @@ using Nedev.DocToDocx;
 
 namespace Nedev.DocToDocx.Cli;
 
-class Program
+public class Program
 {
-    static async Task Main(string[] args)
+    public static async Task Main(string[] args)
     {
         Console.WriteLine("Nedev.DocToDocx CLI converter");
         Console.WriteLine("=============================");
@@ -84,6 +84,18 @@ class Program
             if (!File.Exists(inputPath))
             {
                 Console.WriteLine($"Error: Input file not found: {inputPath}");
+                return;
+            }
+
+            // if input is already a DOCX, just copy
+            string ext = Path.GetExtension(inputPath);
+            if (ext.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                var outDir = Path.GetDirectoryName(outputPath);
+                if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
+                    Directory.CreateDirectory(outDir);
+                File.Copy(inputPath, outputPath, overwrite: true);
+                Console.WriteLine("Copied DOCX file (no conversion required).");
                 return;
             }
 

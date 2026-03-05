@@ -21,4 +21,4 @@ jobs:
       - name: Build
         run: dotnet build Nedev.DocToDocx.slnx --no-restore --configuration Release
       - name: Run tests
-        run: dotnet test tests/Nedev.DocToDocx.Tests/Nedev.DocToDocx.Tests.csproj --no-build --configuration Release
+        run: dotnet test src/Nedev.DocToDocx.Tests/Nedev.DocToDocx.Tests.csproj --no-build --configuration Release

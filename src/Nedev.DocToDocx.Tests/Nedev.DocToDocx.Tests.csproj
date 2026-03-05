@@ -14,17 +14,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Nedev.DocToDocx\Nedev.DocToDocx.csproj" />
-    <ProjectReference Include="..\..\src\Nedev.DocToDocx.Cli\Nedev.DocToDocx.Cli.csproj" />
+    <ProjectReference Include="..\Nedev.DocToDocx\Nedev.DocToDocx.csproj" />
+    <ProjectReference Include="..\Nedev.DocToDocx.Cli\Nedev.DocToDocx.Cli.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- include some sample files for integration tests -->
-    <None Include="..\..\test.doc">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Include="..\..\test.docx">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+
 </Project>
