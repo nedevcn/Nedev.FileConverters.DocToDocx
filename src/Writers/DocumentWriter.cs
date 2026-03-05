@@ -12,10 +12,13 @@ public class DocumentWriter
     private readonly XmlWriter _writer;
     private int _runId = 0;
     private int _trackChangeId = 1;
+    private int _trackChangeId = 1;
     private DocumentModel? _document;
     private DocumentRelationshipIds? _relationshipIds;
     private readonly Dictionary<string, int> _bookmarkIds = new(StringComparer.Ordinal);
     private int _bookmarkCounter = 0;
+    private System.Collections.Generic.HashSet<string> _startedComments = new();
+    private System.Collections.Generic.HashSet<string> _endedComments = new();
     private HashSet<string> _startedComments = new();
     private HashSet<string> _endedComments = new();
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>

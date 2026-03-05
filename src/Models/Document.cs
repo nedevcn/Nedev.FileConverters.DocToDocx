@@ -305,6 +305,11 @@ public class ShapeModel
     public int FillColor { get; set; }   // ICO or COLORREF, 0 = auto/none
     public int LineColor { get; set; }   // ICO or COLORREF, 0 = auto/none
     public int LineWidth { get; set; }   // In twips or similar logical units
+
+    /// <summary>
+    /// Vertices for non-rectangular text wrapping (wp:wrapPolygon).
+    /// </summary>
+    public List<System.Drawing.Point>? WrapPolygonVertices { get; set; }
 }
 
 public enum ShapeType
