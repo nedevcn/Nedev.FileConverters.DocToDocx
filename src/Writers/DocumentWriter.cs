@@ -509,18 +509,14 @@ public class DocumentWriter
             else
             {
                 var paragraph = document.Paragraphs[paraIndex];
-                WriteParagraph(paragraph, _suppressLeadingPageBreak);
+
+                // If a section ends at this paragraph, pass it so sectPr is embedded inside w:pPr
+                SectionInfo? sectionForParagraph = null;
+                sectionEndMap.TryGetValue(paragraph.Index, out sectionForParagraph);
+
+                WriteParagraph(paragraph, _suppressLeadingPageBreak, sectionForParagraph);
                 if (_suppressLeadingPageBreak && ParagraphHasVisibleContent(paragraph))
                     _suppressLeadingPageBreak = false;
-
-                // If a section ends at this paragraph, emit sectPr immediately after it
-                if (sectionEndMap.TryGetValue(paragraph.Index, out var sectionForParagraph))
-                {
-                    const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-                    _writer.WriteStartElement("w", "sectPr", wNs);
-                    WriteSectionContent(sectionForParagraph);
-                    _writer.WriteEndElement();
-                }
 
                 // Emit any charts associated with this paragraph
                 if (chartsByParagraph.TryGetValue(paragraph.Index, out var chartsForParagraph))
@@ -1574,7 +1570,7 @@ public class DocumentWriter
             (!string.IsNullOrEmpty(r.Text) && !string.IsNullOrWhiteSpace(r.Text)) || r.IsPicture || r.IsField);
     }
 
-    private void WriteParagraph(ParagraphModel paragraph, bool suppressPageBreakBefore = false)
+    private void WriteParagraph(ParagraphModel paragraph, bool suppressPageBreakBefore = false, SectionInfo? sectionBreak = null)
     {
         // If this paragraph is actually a wrapper for a nested table, write the table directly
         if (paragraph.Type == ParagraphType.NestedTable && paragraph.NestedTable != null)
@@ -1590,10 +1586,7 @@ public class DocumentWriter
         // and empty paragraphs (blank lines, page breaks) are meaningful document structure.
         _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
         
-        if (paragraph.Properties != null)
-        {
-            WriteParagraphProperties(paragraph.Properties, suppressPageBreakBefore);
-        }
+        WriteParagraphProperties(paragraph.Properties, suppressPageBreakBefore, sectionBreak);
         
         foreach (var run in runsWithContent)
         {
@@ -1603,9 +1596,10 @@ public class DocumentWriter
         _writer.WriteEndElement(); // w:p
     }
     
-    private void WriteParagraphProperties(ParagraphProperties props, bool suppressPageBreakBefore = false)
+    private void WriteParagraphProperties(ParagraphProperties? props, bool suppressPageBreakBefore = false, SectionInfo? sectionBreak = null)
     {
-        if (props == null) return;
+        // Always emit w:pPr if there is a sectionBreak, even when props is null
+        if (props == null && sectionBreak == null) return;
         
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
         
@@ -1615,7 +1609,7 @@ public class DocumentWriter
         _writer.WriteStartElement("w", "pPr", wNs);
         
         // 1. pStyle
-        if (props.StyleIndex >= 0)
+        if (props != null && props.StyleIndex >= 0)
         {
             var style = _document?.Styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == props.StyleIndex);
             var styleId = StyleHelper.GetParagraphStyleId(props.StyleIndex, style?.Name);
@@ -1626,35 +1620,35 @@ public class DocumentWriter
         }
 
         // 2. keepNext
-        if (props.KeepWithNext)
+        if (props != null && props.KeepWithNext)
         {
             _writer.WriteStartElement("w", "keepNext", wNs);
             _writer.WriteEndElement();
         }
         
         // 3. keepLines
-        if (props.KeepTogether)
+        if (props != null && props.KeepTogether)
         {
             _writer.WriteStartElement("w", "keepLines", wNs);
             _writer.WriteEndElement();
         }
         
         // 4. pageBreakBefore (suppressed at doc start so first content e.g. 绿色等级评价报告 stays on page 1)
-        if (props.PageBreakBefore && !suppressPageBreakBefore)
+        if (props != null && props.PageBreakBefore && !suppressPageBreakBefore)
         {
             _writer.WriteStartElement("w", "pageBreakBefore", wNs);
             _writer.WriteEndElement();
         }
 
         // 5. numPr
-        if (props.ListFormatId > 0)
+        if (props != null && props.ListFormatId > 0)
         {
             WriteNumberingProperties(props.ListFormatId, props.ListLevel);
         }
 
         // 6. pBdr
-        if (props.BorderTop != null || props.BorderBottom != null || 
-            props.BorderLeft != null || props.BorderRight != null)
+        if (props != null && (props.BorderTop != null || props.BorderBottom != null || 
+            props.BorderLeft != null || props.BorderRight != null))
         {
             _writer.WriteStartElement("w", "pBdr", wNs);
             if (props.BorderTop != null) WriteBorder("top", props.BorderTop);
@@ -1665,32 +1659,50 @@ public class DocumentWriter
         }
         
         // 7. shd
-        if (props.Shading != null)
+        if (props != null && props.Shading != null)
         {
             WriteShading(props.Shading);
         }
 
         // 8. spacing
-        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing > 0)
+        if (props != null && (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing != 0))
         {
             _writer.WriteStartElement("w", "spacing", wNs);
             if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
             if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
-            if (props.LineSpacing > 0)
+            if (props.LineSpacing != 0)
             {
-                _writer.WriteAttributeString("w", "line", wNs, props.LineSpacing.ToString());
-                if (props.LineSpacingMultiple > 0)
-                    _writer.WriteAttributeString("w", "lineRule", wNs, props.LineSpacingMultiple == 1 ? "auto" : "exact");
+                // In MS-DOC LSPD: fMultLinespace=1 means proportional (auto),
+                // fMultLinespace=0 means absolute. Negative dyaLine = exact,
+                // positive dyaLine with fMult=0 = atLeast.
+                int lineVal = props.LineSpacing;
+                string lineRule;
+                if (props.LineSpacingMultiple == 1)
+                {
+                    // Proportional: value is in 240ths of a line (240 = single)
+                    lineRule = "auto";
+                }
+                else if (lineVal < 0)
+                {
+                    // Exact spacing: use absolute value
+                    lineVal = Math.Abs(lineVal);
+                    lineRule = "exact";
+                }
                 else
-                    _writer.WriteAttributeString("w", "lineRule", wNs, "auto");
+                {
+                    // At-least spacing
+                    lineRule = "atLeast";
+                }
+                _writer.WriteAttributeString("w", "line", wNs, lineVal.ToString());
+                _writer.WriteAttributeString("w", "lineRule", wNs, lineRule);
             }
             _writer.WriteEndElement();
         }
         
         // 9. ind
-        if (props.IndentLeft != 0 || props.IndentRight != 0 || props.IndentFirstLine != 0)
+        if (props != null && (props.IndentLeft != 0 || props.IndentRight != 0 || props.IndentFirstLine != 0))
         {
             _writer.WriteStartElement("w", "ind", wNs);
             if (props.IndentLeft != 0)
@@ -1710,7 +1722,7 @@ public class DocumentWriter
         }
         
         // 10. jc
-        if (props.Alignment != ParagraphAlignment.Left)
+        if (props != null && props.Alignment != ParagraphAlignment.Left)
         {
             _writer.WriteStartElement("w", "jc", wNs);
             var alignment = props.Alignment switch
@@ -1726,7 +1738,7 @@ public class DocumentWriter
         }
 
         // 11. outlineLvl
-        if (props.OutlineLevel >= 0 && props.OutlineLevel < 9)
+        if (props != null && props.OutlineLevel >= 0 && props.OutlineLevel < 9)
         {
             _writer.WriteStartElement("w", "outlineLvl", wNs);
             _writer.WriteAttributeString("w", "val", wNs, props.OutlineLevel.ToString());
@@ -1734,44 +1746,51 @@ public class DocumentWriter
         }
 
         // 12. Text Formatting / Typography Flags
-        if (!props.WordWrap)
+        if (props != null && !props.WordWrap)
         {
             _writer.WriteStartElement("w", "wordWrap", wNs);
             _writer.WriteAttributeString("w", "val", wNs, "0");
             _writer.WriteEndElement();
         }
-        if (!props.Kinsoku)
+        if (props != null && !props.Kinsoku)
         {
             _writer.WriteStartElement("w", "kinsoku", wNs);
             _writer.WriteAttributeString("w", "val", wNs, "0");
             _writer.WriteEndElement();
         }
-        if (!props.SnapToGrid)
+        if (props != null && !props.SnapToGrid)
         {
             _writer.WriteStartElement("w", "snapToGrid", wNs);
             _writer.WriteAttributeString("w", "val", wNs, "0");
             _writer.WriteEndElement();
         }
-        if (!props.AutoSpaceDe)
+        if (props != null && !props.AutoSpaceDe)
         {
             _writer.WriteStartElement("w", "autoSpaceDE", wNs);
             _writer.WriteAttributeString("w", "val", wNs, "0");
             _writer.WriteEndElement();
         }
-        if (!props.AutoSpaceDn)
+        if (props != null && !props.AutoSpaceDn)
         {
             _writer.WriteStartElement("w", "autoSpaceDN", wNs);
             _writer.WriteAttributeString("w", "val", wNs, "0");
             _writer.WriteEndElement();
         }
-        if (props.TopLinePunct)
+        if (props != null && props.TopLinePunct)
         {
             _writer.WriteStartElement("w", "topLinePunct", wNs);
             _writer.WriteEndElement();
         }
-        if (props.OverflowPunct)
+        if (props != null && props.OverflowPunct)
         {
             _writer.WriteStartElement("w", "overflowPunct", wNs);
+            _writer.WriteEndElement();
+        }
+        // Non-final section break: must be the last child of w:pPr per OOXML spec
+        if (sectionBreak != null)
+        {
+            _writer.WriteStartElement("w", "sectPr", wNs);
+            WriteSectionContent(sectionBreak);
             _writer.WriteEndElement();
         }
         
@@ -2021,10 +2040,8 @@ public class DocumentWriter
             {
                 _writer.WriteAttributeString("w", "anchor", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", run.HyperlinkUrl.Substring(1));
             }
-            else
-            {
-                _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", run.HyperlinkRelationshipId ?? "rIdHyperlink");
-            }
+            // External links without a relationship ID: skip r:id to avoid corruption.
+            // The hyperlink text will still be visible but not clickable.
         }
 
         // Only write run if there's text content
@@ -2760,7 +2777,7 @@ public class DocumentWriter
                         _writer.WriteStartElement("w", "t", wNs);
                         if (part.StartsWith(" ") || part.EndsWith(" ") || part.Contains("  "))
                         {
-                            _writer.WriteAttributeString("xml", "space", null, "preserve");
+                            _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
                         }
                         _writer.WriteString(part);
                         _writer.WriteEndElement();

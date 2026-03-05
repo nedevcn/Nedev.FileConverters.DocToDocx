@@ -175,7 +175,10 @@ public class SprmParser
             case 0x0E: pap.IndentRight = (int)(short)sprm.Operand; break; // sprmPDxaRight
             case 0x0F: pap.IndentLeft = (int)(short)sprm.Operand; break; // sprmPDxaLeft
             case 0x11: pap.IndentFirstLine = (int)(short)sprm.Operand; break; // sprmPDxaLeft1
-            case 0x12: pap.LineSpacing = (int)(short)(sprm.Operand & 0xFFFF); break; // sprmPDyaLine
+            case 0x12: // sprmPDyaLine — LSPD structure: low 16 bits = dyaLine (signed), bit 16 = fMultLinespace
+                pap.LineSpacing = (int)(short)(sprm.Operand & 0xFFFF);
+                pap.LineSpacingMultiple = (int)((sprm.Operand >> 16) & 1);
+                break;
             case 0x13: pap.SpaceBefore = (int)(short)sprm.Operand; break; // sprmPDyaBefore
             case 0x14: pap.SpaceAfter = (int)(short)sprm.Operand; break; // sprmPDyaAfter
             case 0x16: pap.InTable = sprm.Operand != 0; break; // sprmPFInTable (0x2416 -> code 0x16)
