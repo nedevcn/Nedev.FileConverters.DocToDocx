@@ -1,4 +1,4 @@
-# Nedev.DocToDocx
+# Nedev.FileConverters.DocToDocx
 
 A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party dependencies.
 
@@ -34,10 +34,10 @@ A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party
 
 ### Library
 
-Add a reference to the `Nedev.DocToDocx` assembly and call the static converter API:
+Add a reference to the `Nedev.FileConverters.DocToDocx` assembly and call the static converter API:
 
 ```csharp
-using Nedev.DocToDocx;
+using Nedev.FileConverters.DocToDocx;
 
 // basic conversion (hyperlinks are enabled by default)
 DocToDocxConverter.Convert("input.doc", "output.docx");
@@ -53,7 +53,7 @@ DocToDocxConverter.Convert("input.doc", "output.docx", password: null, enableHyp
 You can also use the included CLI tool to convert documents directly from the command line:
 
 ```bash
-Nedev.DocToDocx.Cli <input.doc|input.docx|inputDir> <output.docx|outputDir> [-p <password>] [-r]
+Nedev.FileConverters.DocToDocx.Cli <input.doc|input.docx|inputDir> <output.docx|outputDir> [-p <password>] [-r]
 ```
 
 When given a `.doc` file the tool will perform a conversion; a `.docx` input is simply copied to the output location (useful for batch scripts). The CLI also understands password-protected `.doc` files (`-p`), verifying the password before attempting to read.
@@ -71,12 +71,12 @@ When given a `.doc` file the tool will perform a conversion; a `.docx` input is 
 
 ### Running the tests
 
-The repository now ships with a set of unit and integration tests under `src/Nedev.DocToDocx.Tests`.
+The repository now ships with a set of unit and integration tests under `src/Nedev.FileConverters.DocToDocx.Tests`.
 Sample `.doc`/`.docx` files are included and copied to the test output directory so that
 integration tests can exercise the reader and CLI tool. To run the tests execute:
 
 ```bash
-cd src/Nedev.DocToDocx.Tests
+cd src/Nedev.FileConverters.DocToDocx.Tests
 dotnet test
 ```
 

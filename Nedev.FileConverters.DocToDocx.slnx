@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Nedev.FileConverters.DocToDocx.Cli/Nedev.FileConverters.DocToDocx.Cli.csproj" />
+    <Project Path="src/Nedev.FileConverters.DocToDocx/Nedev.FileConverters.DocToDocx.csproj" />
+    <Project Path="src/Nedev.FileConverters.DocToDocx.Tests/Nedev.FileConverters.DocToDocx.Tests.csproj" />
+  </Folder>
+</Solution>

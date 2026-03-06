@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Version>1.0.0</Version>
+    <Authors>Nedev.FileConverters.DocToDocx</Authors>
+    <RootNamespace>Nedev.FileConverters.DocToDocx</RootNamespace>
+    <AssemblyName>Nedev.FileConverters.DocToDocx</AssemblyName>
+    <Description>A high-performance DOC to DOCX converter without third-party dependencies</Description>
+  </PropertyGroup>
+
+</Project>
