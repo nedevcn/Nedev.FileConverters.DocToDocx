@@ -15,7 +15,7 @@ public static class DocToDocxConverter
     /// </summary>
     /// <param name="inputPath">Path to the input .doc file</param>
     /// <param name="outputPath">Path to the output .docx file</param>
-    public static void Convert(string inputPath, string outputPath, string? password = null)
+    public static void Convert(string inputPath, string outputPath, string? password = null, bool enableHyperlinks = true)
     {
         // if the input is already a DOCX file just copy it (CLI supports this, API should too)
         if (Path.GetExtension(inputPath).Equals(".docx", StringComparison.OrdinalIgnoreCase))
@@ -49,7 +49,8 @@ public static class DocToDocxConverter
         
         using var stream = File.Create(outputPath);
         using var zipWriter = new ZipWriter(stream);
-        zipWriter.WriteDocument(reader.Document);
+        var options = new Writers.DocumentWriterOptions { EnableHyperlinks = enableHyperlinks };
+        zipWriter.WriteDocument(reader.Document, options);
         
         // Explicitly dispose the writer to flush the ZIP central directory
         // before the underlying stream is closed or before we return.
@@ -69,15 +70,15 @@ public static class DocToDocxConverter
     /// <summary>
     /// Converts a DOC file to DOCX format asynchronously
     /// </summary>
-    public static async Task ConvertAsync(string inputPath, string outputPath, string? password = null, CancellationToken cancellationToken = default)
+    public static async Task ConvertAsync(string inputPath, string outputPath, string? password = null, bool enableHyperlinks = true, CancellationToken cancellationToken = default)
     {
-        await Task.Run(() => Convert(inputPath, outputPath, password), cancellationToken);
+        await Task.Run(() => Convert(inputPath, outputPath, password, enableHyperlinks), cancellationToken);
     }
     
     /// <summary>
     /// Converts a DOC file to DOCX format with progress reporting
     /// </summary>
-    public static void Convert(string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password = null)
+    public static void Convert(string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password = null, bool enableHyperlinks = true)
     {
         // docx input should simply be copied, but still report stages for compatibility
         if (Path.GetExtension(inputPath).Equals(".docx", StringComparison.OrdinalIgnoreCase))
@@ -119,7 +120,8 @@ public static class DocToDocxConverter
             using var zipWriter = new ZipWriter(stream);
 
             progress?.Report(new ConversionProgress { Stage = ConversionStage.Writing, PercentComplete = 80 });
-            zipWriter.WriteDocument(reader.Document);
+            var options = new Writers.DocumentWriterOptions { EnableHyperlinks = enableHyperlinks };
+            zipWriter.WriteDocument(reader.Document, options);
 
             // Explicitly dispose the writer to flush the ZIP central directory
             zipWriter.Dispose();
@@ -147,7 +149,15 @@ public static class DocToDocxConverter
     /// <summary>
     /// Saves a document model to DOCX format
     /// </summary>
-    public static void SaveDocument(DocumentModel document, string outputPath)
+    public static void SaveDocument(DocumentModel document, string outputPath) =>
+        SaveDocument(document, outputPath, enableHyperlinks: true);
+
+    /// <summary>
+    /// Saves a document model to DOCX format, optionally disabling hyperlink
+    /// relationships.  Turning off hyperlinks prevents Word from warning about
+    /// fields linking to other files when the document is opened.
+    /// </summary>
+    public static void SaveDocument(DocumentModel document, string outputPath, bool enableHyperlinks)
     {
         var outputDir = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
@@ -158,7 +168,8 @@ public static class DocToDocxConverter
         using (var stream = File.Create(outputPath))
         {
             using var zipWriter = new ZipWriter(stream);
-            zipWriter.WriteDocument(document);
+            var options = new Writers.DocumentWriterOptions { EnableHyperlinks = enableHyperlinks };
+            zipWriter.WriteDocument(document, options);
             // Explicitly dispose the writer to flush the ZIP central directory
             zipWriter.Dispose();
         }

@@ -5,11 +5,28 @@ using Nedev.DocToDocx.Utils;
 namespace Nedev.DocToDocx.Writers;
 
 /// <summary>
+/// Options that influence how a <see cref="DocumentWriter"/> emits XML.
+/// </summary>
+public class DocumentWriterOptions
+{
+    /// <summary>
+    /// When <c>true</c> (the default) hyperlink runs produce
+    /// <c>&lt;w:hyperlink&gt;</c> elements and external relationships.
+    /// When <c>false</c> the text is written as plain runs and no
+    /// hyperlink relationship is created, which avoids the Word prompt
+    /// about linked fields.  Clients can disable hyperlinks if they
+    /// prefer a warning-free, static document.
+    /// </summary>
+    public bool EnableHyperlinks { get; set; } = true;
+}
+
+/// <summary>
 /// Writes DOCX document using XmlWriter for optimal streaming performance
 /// </summary>
 public partial class DocumentWriter
 {
     private readonly XmlWriter _writer;
+    private readonly DocumentWriterOptions _options;
     private int _runId = 0;
     private int _trackChangeId = 1;
     private DocumentModel? _document;
@@ -27,9 +44,10 @@ public partial class DocumentWriter
     /// <summary>When true, the next picture written in the body should use full-page dimensions (first-page background).</summary>
     private bool _firstBodyPictureNotYetWritten;
 
-    public DocumentWriter(XmlWriter writer)
+    public DocumentWriter(XmlWriter writer, DocumentWriterOptions? options = null)
     {
         _writer = writer;
+        _options = options ?? new DocumentWriterOptions();
     }
     
 
@@ -1151,9 +1169,56 @@ public partial class DocumentWriter
             WriteBookmarkStart(run.BookmarkName);
         }
 
-        // Handle hyperlink
-        if (run.IsHyperlink && !string.IsNullOrEmpty(run.HyperlinkUrl))
+        // Handle hyperlink (skip entirely when hyperlinks are disabled)
+        if (_options.EnableHyperlinks && run.IsHyperlink && !string.IsNullOrEmpty(run.HyperlinkUrl))
         {
+            // if the run text contains extra material before an embedded HYPERLINK
+            // field code (common when the reader leaves the field code in the same
+            // run as preceding Chinese text), split the run so that the prefix is
+            // written as an ordinary run and the remaining portion is treated as
+            // the hyperlink.  this prevents stray non-link text from appearing
+            // inside the w:hyperlink element and allows sanitization to drop the
+            // field code more reliably.
+            if (!string.IsNullOrEmpty(run.Text))
+            {
+                int idx = run.Text.IndexOf("HYPERLINK", StringComparison.OrdinalIgnoreCase);
+                if (idx > 0)
+                {
+                    string before = run.Text.Substring(0, idx);
+                    string after = run.Text.Substring(idx);
+                    // write the prefix as a normal run with the same formatting
+                    var prefix = new RunModel
+                    {
+                        Text = before,
+                        Properties = run.Properties,
+                        IsField = run.IsField,
+                        FieldCode = run.FieldCode,
+                        CharacterPosition = run.CharacterPosition,
+                        CharacterLength = run.CharacterLength,
+                        IsPicture = run.IsPicture,
+                        ImageIndex = run.ImageIndex,
+                        FcPic = run.FcPic,
+                        ImageRelationshipId = run.ImageRelationshipId,
+                        IsOle = run.IsOle,
+                        OleObjectId = run.OleObjectId,
+                        OleProgId = run.OleProgId,
+                        // explicitly clear hyperlink flags
+                        IsHyperlink = false,
+                        HyperlinkUrl = null,
+                        HyperlinkRelationshipId = null,
+                        IsBookmark = run.IsBookmark,
+                        BookmarkName = run.BookmarkName,
+                        IsBookmarkStart = run.IsBookmarkStart,
+                        CropTop = run.CropTop,
+                        CropBottom = run.CropBottom,
+                        CropLeft = run.CropLeft,
+                        CropRight = run.CropRight
+                    };
+                    WriteRun(prefix);
+                    run.Text = after; // continue processing remaining text below
+                }
+            }
+
             WriteHyperlink(run);
         }
         else
@@ -1264,14 +1329,27 @@ public partial class DocumentWriter
         while ((idx = display.IndexOf("HYPERLINK", StringComparison.OrdinalIgnoreCase)) >= 0)
         {
             int quote1 = display.IndexOf('"', idx);
-            if (quote1 < 0) break;
+            if (quote1 < 0)
+            {
+                // no quote following, just strip the keyword itself
+                display = display.Remove(idx, "HYPERLINK".Length);
+                continue;
+            }
             int quote2 = display.IndexOf('"', quote1 + 1);
-            if (quote2 < 0) break;
+            if (quote2 < 0)
+            {
+                // opening quote present but closing quote not in this run;
+                // remove everything from the keyword to the end of the string
+                display = display.Remove(idx, display.Length - idx);
+                break;
+            }
             display = display.Remove(idx, quote2 - idx + 1);
         }
 
+        // trim stray quotes/whitespace that may remain after sanitization
+        display = display.Trim().Trim('"');
         // if nothing remains, skip emitting the hyperlink element entirely
-        if (string.IsNullOrEmpty(display.Trim()))
+        if (string.IsNullOrEmpty(display))
             return;
 
         _writer.WriteStartElement("w", "hyperlink", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -1828,7 +1906,7 @@ public partial class DocumentWriter
     /// U+FFFD (replacement character) with space to avoid black squares in Word.
     /// Valid: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
     /// </summary>
-    private static string SanitizeXmlString(string text)
+    internal static string SanitizeXmlString(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
@@ -1857,18 +1935,52 @@ public partial class DocumentWriter
                 }
             }
         }
-        // if resulting string is mostly non-letter/digit/punctuation then it's
-        // probably garbage extracted from a binary blob; drop it entirely.
+        // if resulting string contains any characters outside the sets we
+        // explicitly support, or the good/bad ratio is too low, we assume it
+        // came from a binary blob and drop the entire run.  Valid characters
+        // include ASCII letters/digits/punctuation/space/tab/newline, plus the
+        // common CJK ideograph ranges.  Anything else (e.g. Canadian syllabics,
+        // braille, emoji, etc.) is considered exotic and removed wholesale.
         string result = sb.ToString();
         if (result.Length > 0)
         {
-            int good = result.Count(ch => char.IsLetterOrDigit(ch) ||
-                                           char.IsPunctuation(ch) ||
-                                           char.IsWhiteSpace(ch));
-            if (good * 2 < result.Length)
+            bool hasBad = false;
+            int good = 0;
+            foreach (char ch in result)
+            {
+                if (IsAllowed(ch))
+                {
+                    good++;
+                }
+                else
+                {
+                    hasBad = true;
+                }
+            }
+
+            // drop if any bad characters were seen, or if good characters are less
+            // than 75% of the string length (empirically catches mixed garbage).
+            if (hasBad || good * 4 < result.Length * 3)
                 return string.Empty;
         }
         return result;
+
+        static bool IsAllowed(char ch)
+        {
+            if (ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ') return true;
+            if (ch <= 0x007F)
+            {
+                return char.IsLetterOrDigit(ch) || char.IsPunctuation(ch);
+            }
+            return IsCjkIdeograph(ch);
+        }
+
+        static bool IsCjkIdeograph(char c)
+        {
+            return (c >= 0x4E00 && c <= 0x9FFF) ||
+                   (c >= 0x3400 && c <= 0x4DBF) ||
+                   (c >= 0x20000 && c <= 0x2A6DF);
+        }
     }
 
     private string GenerateRsid()

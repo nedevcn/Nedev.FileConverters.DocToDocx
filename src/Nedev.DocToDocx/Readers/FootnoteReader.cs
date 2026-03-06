@@ -24,12 +24,21 @@ public class FootnoteReader
     {
         var footnotes = new List<FootnoteModel>();
 
-        if (_fib.FcFtn == 0 || _fib.LcbFtn == 0 || _fib.CcpFtn == 0)
-            return footnotes;
+            // We normally expect the FIB to advertise the total CP count of the
+            // footnote story (CcpFtn) but some buggy files set this field to 0
+            // even though a valid PLCF is present and the text lives in the
+            // WordDocument stream.  Earlier versions of the library simply
+            // returned an empty list in that case; instead we now treat a zero
+            // CcpFtn as "unknown" and fall through to the reader logic.  the
+            // downstream code already handles the missing count by consulting the
+            // piece table when reconstructing the text (see TextReader.SetTextFromPieces).
+            if (_fib.FcFtn == 0 || _fib.LcbFtn == 0)
+                return footnotes;
 
-        try
-        {
-            footnotes = ReadFootnotesWithOffset();
+            if (_fib.CcpFtn == 0)
+            {
+                Logger.Info("FIB reports CcpFtn=0; will attempt to read footnotes anyway using PLCF data");
+            }
         }
         catch (Exception ex)
         {
@@ -37,6 +46,16 @@ public class FootnoteReader
         }
 
         return footnotes;
+    }
+
+    // helper used by fallback logic to decide if a decoded string still
+    // looks unsuitable for use.
+    private static bool LooksGarbled(string text, int expectedLength)
+    {
+        if (string.IsNullOrEmpty(text)) return true;
+        if (text.Any(char.IsSurrogate)) return true;
+        if (text.Count(c => c == '\0') > expectedLength / 2) return true;
+        return false;
     }
 
     public List<EndnoteModel> ReadEndnotes()
@@ -91,6 +110,48 @@ public class FootnoteReader
             // Extract text from global stream using absolute CP
             var absoluteStartCp = storyOffset + relStart;
             var noteText = _textReader.GetText(absoluteStartCp, length);
+
+            // if the string seems to contain junk (unpaired surrogates, many
+            // nulls, etc.) try a second pass using the FKP parser to find the
+            // corresponding FC offset and re-decode the bytes directly.  Some
+            // documents (including our troublesome sample) store footnote text
+            // in the Table stream instead of WordDocument; in those cases the
+            // normal reader will return mojibake, so we attempt both streams and
+            // pick the result with the higher quality score.
+            bool isGarbled = string.IsNullOrEmpty(noteText) ||
+                             noteText.Any(char.IsSurrogate) ||
+                             noteText.Count(c => c == '\0') > length / 2;
+            if (isGarbled && _fkpParser != null)
+            {
+                var fcOffset = _fkpParser.CpToFc(absoluteStartCp);
+                if (fcOffset.HasValue)
+                {
+                    Logger.Info($"FKP fallback cp={absoluteStartCp} length={length} -> fc={fcOffset.Value}");
+                    // first try the usual WordDocument stream
+                    var alt = _textReader.DecodeRangeFromFc(fcOffset.Value, length, _fib.Lid);
+                    if (!string.IsNullOrEmpty(alt) && !LooksGarbled(alt, length))
+                    {
+                        noteText = alt;
+                    }
+                    else
+                    {
+                        // try Table stream decoder
+                        var alt2 = _textReader.DecodeRangeFromTableFc(fcOffset.Value, length, _fib.Lid);
+                        if (!string.IsNullOrEmpty(alt2) && !LooksGarbled(alt2, length))
+                        {
+                            Logger.Info("Successfully decoded using table stream fallback");
+                            noteText = alt2;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(noteText) && length > 0)
+            {
+                // debug aid: log positions that produced no text; useful when
+                // investigating missing footnote content in sample documents.
+                Logger.Warning($"Empty footnote text (relStart={relStart} length={length} absoluteCp={absoluteStartCp} storyOffset={storyOffset})");
+            }
 
             if (!string.IsNullOrEmpty(noteText))
             {

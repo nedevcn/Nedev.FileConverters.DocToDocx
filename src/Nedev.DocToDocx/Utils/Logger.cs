@@ -118,10 +118,8 @@ public static class Logger
             // Default: write to debug output
             System.Diagnostics.Debug.WriteLine(formattedMessage);
 
-            // Also write to console for non-debug builds
-#if !DEBUG
-            Console.WriteLine(formattedMessage);
-#endif
+            // Also write to console so tests and CLI output can see it
+            try { Console.WriteLine(formattedMessage); } catch { /* ignore */ }
         }
     }
 

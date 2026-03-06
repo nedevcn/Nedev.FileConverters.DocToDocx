@@ -55,14 +55,25 @@ public class TextReader
         if (_fib.FComplex)
         {
             ReadClxInternal();
-            _text = ReconstructTextFromPieces(_fib.CcpText + _fib.CcpFtn + _fib.CcpHdd + _fib.CcpAtn + _fib.CcpEdn + _fib.CcpTxbx + _fib.CcpHdrTxbx, null);
+            int totalCp = _fib.CcpText + _fib.CcpFtn + _fib.CcpHdd + _fib.CcpAtn + _fib.CcpEdn + _fib.CcpTxbx + _fib.CcpHdrTxbx;
+            if (_pieces.Count > 0)
+            {
+                int maxCp = _pieces.Max(p => p.CpEnd);
+                if (totalCp < maxCp)
+                    totalCp = maxCp;
+            }
+            _text = ReconstructTextFromPieces(totalCp, null);
         }
         else
         {
             ReadClxInternal();
             if (_pieces.Count > 0)
             {
-                _text = ReconstructTextFromPieces(_fib.CcpText + _fib.CcpFtn + _fib.CcpHdd + _fib.CcpAtn + _fib.CcpEdn + _fib.CcpTxbx + _fib.CcpHdrTxbx, null);
+                int totalCp = _fib.CcpText + _fib.CcpFtn + _fib.CcpHdd + _fib.CcpAtn + _fib.CcpEdn + _fib.CcpTxbx + _fib.CcpHdrTxbx;
+                int maxCp = _pieces.Max(p => p.CpEnd);
+                if (totalCp < maxCp)
+                    totalCp = maxCp;
+                _text = ReconstructTextFromPieces(totalCp, null);
             }
             else
             {
@@ -81,8 +92,26 @@ public class TextReader
     {
         if (_pieces.Count == 0)
         {
-            _text = ReadSimpleText();
+            // use provided totalCpCount rather than default CcpText so that
+            // simple documents with footnotes (where CcpFtn is zero) can still
+            // include the extra characters that follow the main body.
+            _text = ReadSimpleText(totalCpCount);
             return;
+        }
+        // the caller usually passes a totalCpCount calculated from FIB CP counts
+        // (CcpText, CcpFtn, etc).  in a few buggy files – the sample that's been
+        // giving us trouble for example – CcpFtn is zero even though the piece
+        // table actually contains footnote text beyond the body.  when the
+        // provided totalCpCount is too small we end up truncating the reconstructed
+        // text and any later calls to GetText() return empty strings, which is why
+        // our footnote reader produced empty notes.  to be robust we always make
+        // sure the count is at least as large as the highest CP referenced in the
+        // piece table; this allows us to ignore incorrect/zero CP limits.
+        if (_pieces.Count > 0)
+        {
+            int maxCp = _pieces.Max(p => p.CpEnd);
+            if (totalCpCount < maxCp)
+                totalCpCount = maxCp;
         }
         _text = ReconstructTextFromPieces(totalCpCount, chpMap);
     }
@@ -97,6 +126,73 @@ public class TextReader
 
         var end = Math.Min(startCp + length, _text.Length);
         return _text.Substring(startCp, end - startCp);
+    }
+
+    /// <summary>
+    /// Decode a sequence of characters beginning at the specified file-character
+    /// (FC) offset.  This is a thin wrapper around the piece-decoding helper
+    /// so that callers such as <see cref="FootnoteReader"/> can bypass the
+    /// global _text buffer when the CP→FC mapping is known.
+    /// </summary>
+    public string DecodeRangeFromFc(int fc, int charCount, ushort lid)
+    {
+        var fake = new Piece { FileOffset = (uint)fc, RawFcMasked = (uint)fc };
+        return DecodeCompressedPieceWithLid(fake, charCount, lid);
+    }
+
+    /// <summary>
+    /// Specialized helper for decoding a span of characters when the bytes
+    /// are actually located in the Table stream rather than WordDocument.
+    /// The FKP parser may return offsets that point at the 1Table/0Table
+    /// stream (this happens when footnote text is stored there), so callers
+    /// such as <see cref="FootnoteReader"/> can try this variant if the
+    /// normal stream produce garbage.  The algorithm mirrors
+    /// <see cref="DecodeCompressedPieceWithLid"/> but reads directly from
+    /// <see cref="TableReader"/> and does not attempt the "raw vs fc"
+    /// ambiguity since the caller already supplies the correct byte offset.
+    /// </summary>
+    public string DecodeRangeFromTableFc(int fc, int charCount, ushort lid)
+    {
+        if (charCount <= 0) return string.Empty;
+        var stream = TableReader.BaseStream;
+        int maxLen = (int)stream.Length;
+        string bestStr = string.Empty;
+        int bestScore = int.MinValue;
+
+        // helper to score and update best
+        void Consider(string s)
+        {
+            var q = DecodeQuality(s);
+            if (q > bestScore) { bestScore = q; bestStr = s; }
+        }
+
+        // try Unicode interpretation (2 bytes per char)
+        if (fc + charCount * 2 <= maxLen)
+        {
+            stream.Seek(fc, SeekOrigin.Begin);
+            var buf = new byte[charCount * 2];
+            stream.Read(buf, 0, buf.Length);
+            Consider(Encoding.Unicode.GetString(buf));
+        }
+
+        // try ANSI interpretation using lid-dependent encoding
+        if (fc + charCount <= maxLen)
+        {
+            stream.Seek(fc, SeekOrigin.Begin);
+            var buf = new byte[charCount];
+            stream.Read(buf, 0, buf.Length);
+            var enc = GetEncodingForCompressedText(lid);
+            try { Consider(enc.GetString(buf)); } catch { }
+
+            // extra code pages as in DecodeCompressedPieceWithLid
+            foreach (var extra in GetExtraEncodingsForCompressed(lid))
+            {
+                if (extra.CodePage == enc.CodePage) continue;
+                try { Consider(extra.GetString(buf)); } catch { }
+            }
+        }
+
+        return bestStr;
     }
 
     // ─── CLX Parsing ────────────────────────────────────────────────
@@ -484,48 +580,35 @@ public class TextReader
     /// </summary>
     private string ReadSimpleText()
     {
-        // For non-complex Word 97+ docs, text starts at CP 0 in the WordDocument stream.
-        // MS-DOC: FcMin in FIB is the byte offset of the first character of main document.
-        var ccpText = _fib.CcpText;
-        if (ccpText <= 0) return string.Empty;
+        return ReadSimpleText(_fib.CcpText);
+    }
 
-        var textOffset = _fib.FcMin > 0 ? (int)_fib.FcMin : 0x200; // Use FIB FcMin, fallback 0x200
+    /// <summary>
+    /// Read simple text from the WordDocument stream using a specific CP count.
+    /// Used when the caller knows the story length may exceed the FIB's CcpText
+    /// (e.g. footnotes stored after the main body when CcpFtn is zero).
+    /// </summary>
+    private string ReadSimpleText(int cpCount)
+    {
+        // Improved simple-text reader that tries multiple encodings just like
+        // DecodeCompressedPieceWithLid does for pieces.  The previous version
+        // assumed Unicode (2 bytes/char) and only fell back to ANSI when the
+        // decoded string was half nulls; this frequently mis‑decoded footnotes
+        // and other stories in "simple" documents, turning valid bytes into
+        // unpaired surrogates which our sanitizer then discarded.  By reusing
+        // the same heuristics as the piece decoder we can correctly handle
+        // ANSI/GBK, Unicode, broken FIB counts, etc.
 
-        // Try reading as Unicode from calculated offset
-        try
+        if (cpCount <= 0) return string.Empty;
+        var textOffset = _fib.FcMin > 0 ? (int)_fib.FcMin : 0x200;
+
+        // Build a temporary Piece object so we can reuse the decoding helper.
+        var fake = new Piece
         {
-            _wordDocReader.BaseStream.Seek(textOffset, SeekOrigin.Begin);
-            var bytes = _wordDocReader.ReadBytes(ccpText * 2);
-            
-            // Validate the text - check if it looks like valid Unicode
-            var text = Encoding.Unicode.GetString(bytes);
-            
-            // If text contains too many null characters or control characters,
-            // it might be ANSI or the offset is wrong — try ANSI and multiple code pages
-            var nullCount = text.Count(c => c == '\0');
-            if (nullCount > ccpText * 0.5)
-            {
-                _wordDocReader.BaseStream.Seek(textOffset, SeekOrigin.Begin);
-                var ansiBytes = _wordDocReader.ReadBytes(ccpText);
-                var encLid = GetEncodingForCompressedText(_fib.Lid);
-                text = encLid.GetString(ansiBytes);
-                var bestScore = DecodeQuality(text);
-                foreach (var enc in GetExtraEncodingsForCompressed(_fib.Lid))
-                {
-                    if (enc.CodePage == encLid.CodePage) continue;
-                    string s;
-                    try { s = enc.GetString(ansiBytes); } catch { continue; }
-                    var q = DecodeQuality(s);
-                    if (q > bestScore) { bestScore = q; text = s; }
-                }
-            }
-            
-            return text;
-        }
-        catch
-        {
-            return string.Empty;
-        }
+            FileOffset = (uint)textOffset,
+            RawFcMasked = (uint)textOffset
+        };
+        return DecodeCompressedPieceWithLid(fake, cpCount, _fib.Lid);
     }
 }
 

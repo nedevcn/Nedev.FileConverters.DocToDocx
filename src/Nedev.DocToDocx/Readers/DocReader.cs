@@ -18,6 +18,15 @@ namespace Nedev.DocToDocx.Readers;
 /// </summary>
 public class DocReader : IDisposable
 {
+    // ensure legacy code pages are available on .NET 10+ so we can decode ANSI
+    // text in East Asian documents (GBK, Shift-JIS, etc).  doing this once in
+    // a static ctor keeps the library self-contained and avoids crashes when
+    // callers use Encoding.GetEncoding in the readers.
+    static DocReader()
+    {
+        Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+    }
+
     private CfbReader? _cfb;
     private BinaryReader? _wordDocReader;
     private BinaryReader? _tableReader;
@@ -267,7 +276,37 @@ public class DocReader : IDisposable
         Document.ListFormats = _listReader.ListFormats;
 
         // Step 3: Read text content via Piece Table (with per-run Lid for encoding)
-        var totalCp = _fibReader!.CcpText + _fibReader.CcpFtn + _fibReader.CcpHdd + _fibReader.CcpAtn + _fibReader.CcpEdn + _fibReader.CcpTxbx + _fibReader.CcpHdrTxbx;
+        int totalCp = _fibReader!.CcpText + _fibReader.CcpFtn + _fibReader.CcpHdd + _fibReader.CcpAtn + _fibReader.CcpEdn + _fibReader.CcpTxbx + _fibReader.CcpHdrTxbx;
+
+        // if the FIB reports CcpFtn==0 but we still have a footnote PLCF, the
+        // footnote story is stored separately in the WordDocument stream and
+        // won't be captured by our simple-text reader.  in that case we compute
+        // the length of the footnote story from the PLCF and bump totalCp so
+        // the subsequent SetTextFromPieces call reads those extra characters.
+        if (_fibReader.CcpFtn == 0 && _fibReader.FcFtn != 0 && _fibReader.LcbFtn != 0)
+        {
+            try
+            {
+                var tr = _tableReader!;
+                tr.BaseStream.Seek(_fibReader.FcFtn, SeekOrigin.Begin);
+                int n = (int)((_fibReader.LcbFtn - 4) / 6);
+                if (n > 0)
+                {
+                    var cpArray = new int[n + 1];
+                    for (int i = 0; i <= n; i++)
+                        cpArray[i] = tr.ReadInt32();
+                    int footCpLen = cpArray[n];
+                    int candidate = _fibReader.CcpText + footCpLen + _fibReader.CcpHdd + _fibReader.CcpAtn + _fibReader.CcpEdn + _fibReader.CcpTxbx + _fibReader.CcpHdrTxbx;
+                    if (candidate > totalCp)
+                        totalCp = candidate;
+                }
+            }
+            catch
+            {
+                // ignore – we just fall back to original totalCp
+            }
+        }
+
         _textReader!.ReadClx();
         _globalChpMap = _fkpParser!.ReadChpProperties();
         _globalPapMap = _fkpParser.ReadPapProperties();

@@ -159,6 +159,10 @@ namespace Nedev.DocToDocx.Tests
             Assert.Contains("FTR", ftr);
             var fnxml = new StreamReader(zip.GetEntry("word/footnotes.xml").Open()).ReadToEnd();
             Assert.Contains("fn", fnxml);
+            // footnote elements should use the w:footnote tag and not fall back to an incorrect
+            // default namespace (which previously produced `<w xmlns="footnote" …>`).
+            Assert.Matches("<w:footnote[^>]*id=", fnxml);
+            Assert.DoesNotContain("xmlns=\"footnote\"", fnxml);
         }
 
         [Fact]
@@ -440,6 +444,52 @@ namespace Nedev.DocToDocx.Tests
         }
 
         [Fact]
+        public void SanitizeXmlString_RemovesExoticRuns()
+        {
+            // verify that any run containing characters outside the ASCII + CJK
+            // set is returned as an empty string.
+            var method = typeof(Nedev.DocToDocx.Writers.DocumentWriter)
+                .GetMethod("SanitizeXmlString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+            string input = "HelloᔗWorld中文";
+            string cleaned = (string)method.Invoke(null, new object[] { input })!;
+            Assert.Equal(string.Empty, cleaned);
+        }
+
+        [Fact]
+        public void HyperlinkFieldCode_PrefixIsSplitAndSanitized()
+        {
+            var doc = new DocumentModel();
+            var para = new ParagraphModel();
+            // run contains some normal text, then a stray HYPERLINK field code and part
+            // of the url, followed by the visible link text.
+            para.Runs.Add(new RunModel
+            {
+                Text = "foo HYPERLINK \"http://a.com\"bar",
+                IsHyperlink = true,
+                HyperlinkUrl = "http://a.com"
+            });
+            doc.Paragraphs.Add(para);
+
+            byte[] pkg;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                pkg = ms.ToArray();
+            }
+
+            var xml = new StreamReader(new System.IO.Compression.ZipArchive(new MemoryStream(pkg), System.IO.Compression.ZipArchiveMode.Read).GetEntry("word/document.xml").Open()).ReadToEnd();
+
+            // the prefix text should appear outside of any hyperlink element
+            Assert.Contains("foo ", xml);
+            // the hyperlink element should not contain the literal HYPERLINK anymore
+            Assert.DoesNotMatch("HYPERLINK", xml);
+            // the visible link text 'bar' should still be present inside hyperlink
+            Assert.Contains("bar", xml);
+        }
+
+        [Fact]
         public void HyperlinkIds_IncludeBookmark()
         {
             var doc = new DocumentModel();
@@ -460,14 +510,53 @@ namespace Nedev.DocToDocx.Tests
             var rels = new StreamReader(new System.IO.Compression.ZipArchive(new MemoryStream(pkg), System.IO.Compression.ZipArchiveMode.Read).GetEntry("word/_rels/document.xml.rels").Open()).ReadToEnd();
             Assert.Contains("foo", rels);
             Assert.Contains("bar", rels);
-            // ensure two different rIds
-            var ids = Regex.Matches(rels, "Id=\\\"(rId\\d+)\\\"").Cast<Match>().Select(m=>m.Groups[1].Value).Distinct().ToList();
-            Assert.Equal(2, ids.Count);
+            // ensure two hyperlink relationships only
+            var hyperCount = Regex.Matches(rels, "Type=\\\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\\\"").Count;
+            Assert.Equal(2, hyperCount);
+        }
+
+        [Fact]
+        public void HyperlinksCanBeDisabled()
+        {
+            var doc = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "click", IsHyperlink = true, HyperlinkUrl = "http://example.com" };
+            para.Runs.Add(run);
+            doc.Paragraphs.Add(para);
+
+            byte[] pkg;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                var options = new Writers.DocumentWriterOptions { EnableHyperlinks = false };
+                zw.WriteDocument(doc, options);
+                zw.Dispose();
+                pkg = ms.ToArray();
+            }
+            var xml = new StreamReader(new System.IO.Compression.ZipArchive(new MemoryStream(pkg), System.IO.Compression.ZipArchiveMode.Read).GetEntry("word/document.xml").Open()).ReadToEnd();
+            Assert.DoesNotContain("hyperlink", xml, StringComparison.OrdinalIgnoreCase);
+            var rels = new StreamReader(new System.IO.Compression.ZipArchive(new MemoryStream(pkg), System.IO.Compression.ZipArchiveMode.Read).GetEntry("word/_rels/document.xml.rels").Open()).ReadToEnd();
+            Assert.DoesNotContain("hyperlink", rels, StringComparison.OrdinalIgnoreCase);
+            // text still present
+            Assert.Contains("click", xml);
         }
 
         [Fact]
         public void CommentsOnEmptyParagraph_AreMappedCorrectly()
         {
+            // include a quick sanity check that the public SaveDocument helper honors
+            // the hyperlink toggle (this is largely exercising the convenience API).
+            var tmp = Path.GetTempFileName() + ".docx";
+            var sample = new DocumentModel();
+            sample.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "a", IsHyperlink = true, HyperlinkUrl = "http://x" } } });
+            DocToDocxConverter.SaveDocument(sample, tmp, enableHyperlinks: false);
+            using (var archive = new System.IO.Compression.ZipArchive(File.OpenRead(tmp), System.IO.Compression.ZipArchiveMode.Read))
+            {
+                var rels = new StreamReader(archive.GetEntry("word/_rels/document.xml.rels").Open()).ReadToEnd();
+                Assert.DoesNotContain("hyperlink", rels, StringComparison.OrdinalIgnoreCase);
+            }
+            File.Delete(tmp);
+
             var doc = new DocumentModel();
             var para1 = new ParagraphModel();
             para1.Runs.Add(new RunModel { Text = "hello" });
@@ -486,6 +575,27 @@ namespace Nedev.DocToDocx.Tests
             var xml = new StreamReader(new System.IO.Compression.ZipArchive(new MemoryStream(pkg), System.IO.Compression.ZipArchiveMode.Read).GetEntry("word/document.xml").Open()).ReadToEnd();
             // comment range start should be inside first paragraph, not lost
             Assert.Contains("commentRangeStart", xml);
+        }
+
+        [Fact]
+        public void GeneratedDoc_IsValidOpenXml()
+        {
+            var model = new DocumentModel();
+            model.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Check" } } });
+            string tmp = Path.GetTempFileName() + ".docx";
+            using (var fs = File.Create(tmp))
+            {
+                using var zw = new ZipWriter(fs);
+                zw.WriteDocument(model);
+                zw.Dispose();
+            }
+            using (var package = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Open(tmp, false))
+            {
+                var validator = new DocumentFormat.OpenXml.Validation.OpenXmlValidator();
+                var errors = validator.Validate(package);
+                Assert.Empty(errors);
+            }
+            File.Delete(tmp);
         }
     }
 }

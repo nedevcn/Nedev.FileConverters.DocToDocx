@@ -49,7 +49,7 @@ public class RelationshipsWriter
     /// <summary>
     /// Writes document relationships
     /// </summary>
-    public void WriteDocumentRelationships(DocumentModel document)
+    public void WriteDocumentRelationships(DocumentModel document, bool includeHyperlinks = true)
     {
         _writer.WriteStartDocument();
         _writer.WriteStartElement("Relationships", "http://schemas.openxmlformats.org/package/2006/relationships");
@@ -163,7 +163,10 @@ public class RelationshipsWriter
         }
 
         // Hyperlink relationships (external)
-        WriteHyperlinkRelationships(document);
+        if (includeHyperlinks)
+        {
+            WriteHyperlinkRelationships(document);
+        }
         
         _writer.WriteEndElement();
         _writer.WriteEndDocument();

@@ -19,6 +19,11 @@ public class FkpParser
     private readonly Dictionary<uint, ChpFkp> _chpFkpCache = new();
     private readonly Dictionary<uint, PapFkp> _papFkpCache = new();
 
+    // cache of FC↔CP segments gleaned from parsed FKP pages; used by
+    // CpToFc() to locate byte offsets for given CP positions when no piece
+    // table is available (simple documents with footnotes).
+    private readonly List<(int cpStart, int cpEnd, int fcStart, int fcEnd)> _fcCpSegments = new();
+
     public FkpParser(BinaryReader wordDocReader, BinaryReader tableReader, FibReader fib, TextReader textReader)
     {
         _wordDocReader = wordDocReader;
@@ -32,9 +37,10 @@ public class FkpParser
 
     public Dictionary<int, ChpBase> ReadChpProperties()
     {
-        var chpMap = new Dictionary<int, ChpBase>();
-        if (_fib.FcPlcfBteChpx == 0 || _fib.LcbPlcfBteChpx < 16) return chpMap;
+            // clear any previous FC↔CP segments when we re-read the table
+            _fcCpSegments.Clear();
 
+        var chpMap = new Dictionary<int, ChpBase>();
         _tableReader.BaseStream.Seek(_fib.FcPlcfBteChpx, SeekOrigin.Begin);
         
         // PLC structure: CP array (n+1 entries) + PCD array (n entries)
@@ -145,12 +151,20 @@ public class FkpParser
             Array.Copy(data, dataOffset + 1, grpprl, 0, cb);
             _sprmParser.ApplyToChp(grpprl, chp);
 
+            var startFc = fcArray[i];
+            var endFc = fcArray[i + 1];
+            var cpStart = FcToCp(startFc);
+            var cpEnd = FcToCp(endFc);
             fkp.Entries.Add(new ChpFkpEntry
             {
-                StartCpOffset = fcArray[i],
-                EndCpOffset = fcArray[i + 1],
+                StartCpOffset = cpStart,
+                EndCpOffset = cpEnd,
+                StartFcOffset = startFc,
+                EndFcOffset = endFc,
                 Properties = chp
             });
+            // remember segment for CP→FC lookups later
+            _fcCpSegments.Add((cpStart, cpEnd, startFc, endFc));
         }
         return fkp;
     }
@@ -367,6 +381,27 @@ public class FkpParser
         return Math.Clamp(fc, 0, _fib.CcpText);
     }
 
+    /// <summary>
+    /// Reverse mapping of <see cref="FcToCp"/>.  Uses the FC segments cached
+    /// while parsing FKP pages to estimate a corresponding FC offset for a
+    /// given CP position.  Returns null if nothing matches.
+    /// </summary>
+    public int? CpToFc(int cp)
+    {
+        foreach (var seg in _fcCpSegments)
+        {
+            if (cp >= seg.cpStart && cp < seg.cpEnd)
+            {
+                int cpLen = seg.cpEnd - seg.cpStart;
+                int fcLen = seg.fcEnd - seg.fcStart;
+                if (cpLen <= 0) return seg.fcStart;
+                int bpc = Math.Max(1, fcLen / cpLen);
+                return seg.fcStart + (cp - seg.cpStart) * bpc;
+            }
+        }
+        return null;
+    }
+
     #endregion
 
     #region Convenience Methods
@@ -457,6 +492,14 @@ public class ChpFkpEntry
 {
     public int StartCpOffset { get; set; }
     public int EndCpOffset { get; set; }
+
+    // keep the original file-character (FC) offsets so that callers can map
+    // a CP position back to a byte offset in the WordDocument stream.  this
+    // is the inverse of the existing FcToCp helper, which we must invert for
+    // simple documents where the piece table is missing.
+    public int StartFcOffset { get; set; }
+    public int EndFcOffset { get; set; }
+
     public ChpBase Properties { get; set; } = new();
 }
 

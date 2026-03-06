@@ -46,7 +46,8 @@ public static class HyperlinkIdAssigner
                     continue;
 
                 // split url and optional fragment so we dedupe the same way as HyperlinkModel
-                string url = run.HyperlinkUrl;
+                string original = run.HyperlinkUrl!;
+                string url = original;
                 string? bookmark = null;
                 int hash = url.IndexOf('#');
                 if (hash >= 0)
@@ -67,13 +68,22 @@ public static class HyperlinkIdAssigner
                 // ensure hyperlink model exists so relationships writer will emit it
                 if (document.Hyperlinks == null)
                     document.Hyperlinks = new List<HyperlinkModel>();
-                if (!document.Hyperlinks.Any(h =>
-                    string.Equals(h.Url, url, StringComparison.OrdinalIgnoreCase) &&
-                    h.Bookmark == bookmark))
+
+                bool exists = document.Hyperlinks.Any(h =>
+                {
+                    string hurl = h.Url ?? string.Empty;
+                    int hhash = hurl.IndexOf('#');
+                    if (hhash >= 0)
+                        hurl = hurl.Substring(0, hhash);
+                    return string.Equals(hurl, url, StringComparison.OrdinalIgnoreCase) &&
+                           h.Bookmark == bookmark;
+                });
+
+                if (!exists)
                 {
                     document.Hyperlinks.Add(new HyperlinkModel
                     {
-                        Url = url,
+                        Url = original,   // preserve fragment in the stored url
                         Bookmark = bookmark,
                         IsExternal = true,
                         RelationshipId = relId

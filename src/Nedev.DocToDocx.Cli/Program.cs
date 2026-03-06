@@ -36,6 +36,7 @@ public class Program
         string outputPath = args[1];
         string? password = null;
         bool recursive = false;
+        bool disableHyperlinks = false;
 
         // parse remaining options
         for (int i = 2; i < args.Length; i++)
@@ -52,6 +53,9 @@ public class Program
                 case "-r":
                 case "--recursive":
                     recursive = true;
+                    break;
+                case "--no-hyperlinks":
+                    disableHyperlinks = true;
                     break;
             }
         }
@@ -83,7 +87,7 @@ public class Program
                         else
                         {
                             Console.WriteLine($"Converting {docFile} -> {outFile}");
-                            DocToDocxConverter.Convert(docFile, outFile, password);
+                            DocToDocxConverter.Convert(docFile, outFile, password, enableHyperlinks: !disableHyperlinks);
                         }
                     }
 
@@ -113,7 +117,7 @@ public class Program
                     }
                 });
 
-                await Task.Run(() => DocToDocxConverter.Convert(inputPath, outputPath, progress, password));
+                await Task.Run(() => DocToDocxConverter.Convert(inputPath, outputPath, progress, password, enableHyperlinks: !disableHyperlinks));
 
             Console.WriteLine("Successfully converted the document.");
         }
@@ -137,5 +141,7 @@ public class Program
         Console.WriteLine("  -p, --password   The password to open an encrypted DOC file.");
         Console.WriteLine("  -r, --recursive  When input is a directory, process .doc files recursively.");
         Console.WriteLine("  -h, --help       Show this help message and exit.");
+        Console.WriteLine("      --no-hyperlinks    Disable hyperlink elements and relationships in the generated DOCX.\n" +
+                          "                       Text remains but links are treated as regular text, avoiding Word warnings");
     }
 }

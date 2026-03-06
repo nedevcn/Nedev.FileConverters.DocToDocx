@@ -5,6 +5,8 @@ A high‑fidelity `.doc` → `.docx` converter for .NET 10 with no third‑party
 ## Features
 
 - **Binary `.doc` reader**: Implements core MS‑DOC structures (CFB, FIB, CLX/Piece Table, CHPX/PAPX FKPs, PLCFs).
+
+> **Bug fix:** footnote and endnote parts are now emitted with the correct `w:footnote`/`w:endnote` namespace, eliminating previously corrupted documents that Word declared as damaged.
 - **Rich text & styles**: Fonts, font sizes, bold/italic/underline, colors, highlighting, outline/emboss/shadow, language (`w:lang`), paragraph alignment, spacing, indentation, borders, shading, and numbered/bulleted lists (including many localized formats).
 - **Tables**: Multi‑row/column tables with TAP‑driven layout: row height and exact/at‑least rules, header rows, `cantSplit`, per‑cell width, proper vertical merges (`vMerge restart/continue`), horizontal merges (`gridSpan`), table‑level borders and shading mapped to DOCX. Nested tables are now tracked as child `TableModel` instances with parent indexes, allowing the writer to emit them in place. Recent iterations improved usage of TAP metadata (preferred table width, left indent, cell spacing) for more faithful layout under complex merges.
 - **Sections & page setup**: Multiple sections with page size/orientation, margins, starting page number, and First/Odd/Even headers/footers mapped to separate DOCX parts.
@@ -37,7 +39,13 @@ Add a reference to the `Nedev.DocToDocx` assembly and call the static converter 
 ```csharp
 using Nedev.DocToDocx;
 
+// basic conversion (hyperlinks are enabled by default)
 DocToDocxConverter.Convert("input.doc", "output.docx");
+
+// disable hyperlinks (useful when the source document contains potentially
+// external links and you want to suppress Word's "fields may refer to other
+// files" warning)
+DocToDocxConverter.Convert("input.doc", "output.docx", password: null, enableHyperlinks: false);
 ```
 
 ### Command Line Interface (CLI)
@@ -57,6 +65,7 @@ When given a `.doc` file the tool will perform a conversion; a `.docx` input is 
 **Options:**
 - `-p`, `--password` The password to open an encrypted DOC file.
 - `-r`, `--recursive` When a directory is supplied as `<input>`, process `.doc` files recursively and mirror the structure in `<output>`.
+- `--no-hyperlinks` Disable emission of hyperlink elements and relationships in the output DOCX.  Use this when you need to avoid Word warnings about fields that may refer to other files.
 - `-h`, `--help` Show this help message and exit.
 
 

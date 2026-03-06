@@ -75,9 +75,17 @@ public class ZipWriter : IDisposable
     }
     
     /// <summary>
-    /// Writes the document to the archive
+    /// Writes the document to the archive using default options.
     /// </summary>
     public void WriteDocument(DocumentModel document)
+    {
+        WriteDocument(document, options: null);
+    }
+
+    /// <summary>
+    /// Writes the document to the archive with the provided writer options.
+    /// </summary>
+    public void WriteDocument(DocumentModel document, DocumentWriterOptions? options)
     {
         // Assign relationship IDs for hyperlinks after other IDs are reserved
         var relIds = RelationshipsWriter.ComputeRelationshipIds(document);
@@ -114,7 +122,7 @@ public class ZipWriter : IDisposable
         // Write word/document.xml
         AddXmlEntry("word/document.xml", w =>
         {
-            var writer = new DocumentWriter(w);
+            var writer = new DocumentWriter(w, options);
             writer.WriteDocument(document);
         });
 
@@ -128,7 +136,7 @@ public class ZipWriter : IDisposable
         AddXmlEntry("word/_rels/document.xml.rels", w =>
         {
             var writer = new RelationshipsWriter(w);
-            writer.WriteDocumentRelationships(document);
+            writer.WriteDocumentRelationships(document, includeHyperlinks: options?.EnableHyperlinks ?? true);
         });
         
         // Write word/styles.xml

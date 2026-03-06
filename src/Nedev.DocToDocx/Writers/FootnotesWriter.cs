@@ -12,6 +12,7 @@ public class FootnotesWriter
     private readonly XmlWriter _writer;
     private DocumentModel? _document;
     private Dictionary<int, string>? _imageIndexToRelId;
+    private const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
     public FootnotesWriter(XmlWriter writer)
     {
@@ -100,7 +101,7 @@ public class FootnotesWriter
 
     private void WriteFootnote(NoteModelBase note, string type)
     {
-        _writer.WriteStartElement("w", type);
+        _writer.WriteStartElement("w", type, wNs);
         _writer.WriteAttributeString("w", "id", null, note.Index.ToString());
 
         // Write paragraph
@@ -114,7 +115,7 @@ public class FootnotesWriter
 
     private void WriteParagraph(ParagraphModel paragraph)
     {
-        _writer.WriteStartElement("w", "p");
+        _writer.WriteStartElement("w", "p", wNs);
 
         // Write runs
         foreach (var run in paragraph.Runs)
@@ -140,42 +141,47 @@ public class FootnotesWriter
             }
         }
 
-        _writer.WriteStartElement("w", "r");
+        _writer.WriteStartElement("w", "r", wNs);
 
         if (run.Properties != null)
         {
-            _writer.WriteStartElement("w", "rPr");
+            _writer.WriteStartElement("w", "rPr", wNs);
             if (!string.IsNullOrEmpty(run.Properties.FontName))
             {
-                _writer.WriteStartElement("w", "rFonts");
+                _writer.WriteStartElement("w", "rFonts", wNs);
                 _writer.WriteAttributeString("w", "ascii", null, run.Properties.FontName);
                 _writer.WriteAttributeString("w", "hAnsi", null, run.Properties.FontName);
                 _writer.WriteEndElement();
             }
             if (run.Properties.FontSize > 0)
             {
-                _writer.WriteStartElement("w", "sz");
+                _writer.WriteStartElement("w", "sz", wNs);
                 _writer.WriteAttributeString("w", "val", null, run.Properties.FontSize.ToString());
                 _writer.WriteEndElement();
             }
-            if (run.Properties.IsBold) { _writer.WriteStartElement("w", "b"); _writer.WriteEndElement(); }
-            if (run.Properties.IsItalic) { _writer.WriteStartElement("w", "i"); _writer.WriteEndElement(); }
+            if (run.Properties.IsBold) { _writer.WriteStartElement("w", "b", wNs); _writer.WriteEndElement(); }
+            if (run.Properties.IsItalic) { _writer.WriteStartElement("w", "i", wNs); _writer.WriteEndElement(); }
             var colorHex = ColorHelper.ColorToHex(run.Properties.Color);
             if (colorHex != "auto")
             {
-                _writer.WriteStartElement("w", "color");
+                _writer.WriteStartElement("w", "color", wNs);
                 _writer.WriteAttributeString("w", "val", null, colorHex);
                 _writer.WriteEndElement();
             }
             _writer.WriteEndElement();
         }
 
-        _writer.WriteStartElement("w", "t");
+        _writer.WriteStartElement("w", "t", wNs);
         if (!string.IsNullOrEmpty(run.Text))
         {
-            if (run.Text.StartsWith(' ') || run.Text.EndsWith(' ') || run.Text.Contains("  "))
-                _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
-            _writer.WriteString(run.Text);
+            // sanitize text to remove any embedded nulls or illegal XML chars (see DocumentWriter)
+            var safe = Nedev.DocToDocx.Writers.DocumentWriter.SanitizeXmlString(run.Text);
+            if (!string.IsNullOrEmpty(safe))
+            {
+                if (safe.StartsWith(' ') || safe.EndsWith(' ') || safe.Contains("  "))
+                    _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
+                _writer.WriteString(safe);
+            }
         }
         _writer.WriteEndElement();
         _writer.WriteEndElement();
