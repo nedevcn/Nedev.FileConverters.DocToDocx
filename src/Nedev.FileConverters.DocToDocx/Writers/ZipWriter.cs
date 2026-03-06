@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Xml;
 using Nedev.FileConverters.DocToDocx.Models;
+using Nedev.FileConverters.DocToDocx.Utils;
 using Nedev.FileConverters.DocToDocx.Writers;
 
 namespace Nedev.FileConverters.DocToDocx.Writers;
@@ -305,7 +306,7 @@ public class ZipWriter : IDisposable
         var footers = document.HeadersFooters.Footers;
 
         // HeaderFirst -> header1.xml
-        var headerFirst = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderFirst);
+        var headerFirst = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
         if (headerFirst != null)
         {
             AddXmlEntry("word/header1.xml", w =>
@@ -316,7 +317,7 @@ public class ZipWriter : IDisposable
         }
 
         // HeaderOdd (default) -> header2.xml
-        var headerOdd = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderOdd);
+        var headerOdd = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
         if (headerOdd != null)
         {
             AddXmlEntry("word/header2.xml", w =>
@@ -327,7 +328,7 @@ public class ZipWriter : IDisposable
         }
 
         // HeaderEven -> header3.xml
-        var headerEven = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderEven);
+        var headerEven = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
         if (headerEven != null)
         {
             AddXmlEntry("word/header3.xml", w =>
@@ -338,7 +339,7 @@ public class ZipWriter : IDisposable
         }
 
         // FooterFirst -> footer1.xml
-        var footerFirst = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterFirst);
+        var footerFirst = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
         if (footerFirst != null)
         {
             AddXmlEntry("word/footer1.xml", w =>
@@ -349,7 +350,7 @@ public class ZipWriter : IDisposable
         }
 
         // FooterOdd (default) -> footer2.xml
-        var footerOdd = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterOdd);
+        var footerOdd = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
         if (footerOdd != null)
         {
             AddXmlEntry("word/footer2.xml", w =>
@@ -360,7 +361,7 @@ public class ZipWriter : IDisposable
         }
 
         // FooterEven -> footer3.xml
-        var footerEven = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterEven);
+        var footerEven = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
         if (footerEven != null)
         {
             AddXmlEntry("word/footer3.xml", w =>

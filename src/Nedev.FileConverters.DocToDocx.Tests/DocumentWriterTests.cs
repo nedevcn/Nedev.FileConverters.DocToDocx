@@ -48,6 +48,30 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void WriteDocument_DefaultParagraphSpacing_IsNotForced()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel
+            {
+                Properties = new ParagraphProperties(),
+                Runs = { new RunModel { Text = "Hello" } }
+            });
+
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                var dw = new DocumentWriter(writer);
+                dw.WriteDocument(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+
+            Assert.DoesNotContain("<w:spacing w:line=\"240\" w:lineRule=\"atLeast\"", xml, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void WriteRun_Formats_AreEmitted()
         {
             var doc = new DocumentModel();
@@ -578,6 +602,30 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Contains("w:footerReference", documentXml);
             Assert.Contains("<w:evenAndOddHeaders", settingsXml);
             Assert.DoesNotContain("<w:updateFields", settingsXml);
+        }
+
+        [Fact]
+        public void SettingsWriter_WritesCompatibilityFlags()
+        {
+            var doc = new DocumentModel();
+            doc.Properties.FUsePrinterMetrics = true;
+            doc.Properties.FSuppressBottomSpacing = true;
+            doc.Properties.FSuppressSpacings = true;
+
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                new SettingsWriter(writer).WriteSettings(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+
+            Assert.Contains("<w:compat", xml);
+            Assert.Contains("<w:usePrinterMetrics", xml);
+            Assert.Contains("<w:suppressBottomSpacing", xml);
+            Assert.Contains("<w:suppressSpacingAtTopOfPage", xml);
         }
 
         [Fact]

@@ -1,5 +1,6 @@
 using System.Xml;
 using Nedev.FileConverters.DocToDocx.Models;
+using Nedev.FileConverters.DocToDocx.Utils;
 
 namespace Nedev.FileConverters.DocToDocx.Writers;
 
@@ -223,9 +224,9 @@ public class RelationshipsWriter
             ids.CommentsRId = nextId++;
         
         // Header/footer parts: allocate distinct IDs per type if present
-        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst);
-        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd);
-        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven);
+        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
+        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
+        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
 
         if (hasHeaderFirst)
             ids.HeaderFirstRId = nextId++;
@@ -234,9 +235,9 @@ public class RelationshipsWriter
         if (hasHeaderEven)
             ids.HeaderEvenRId = nextId++;
 
-        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst);
-        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd);
-        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven);
+        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
+        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
+        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
 
         if (hasFooterFirst)
             ids.FooterFirstRId = nextId++;
@@ -346,9 +347,44 @@ public class SettingsWriter
             _writer.WriteStartElement("w", "evenAndOddHeaders", wNs);
             _writer.WriteEndElement();
         }
+
+        if (document != null)
+        {
+            WriteCompatibilitySettings(document.Properties);
+        }
         
         _writer.WriteEndElement(); // w:settings
         _writer.WriteEndDocument();
+    }
+
+    private void WriteCompatibilitySettings(DocumentProperties props)
+    {
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+        if (!props.FUsePrinterMetrics && !props.FSuppressBottomSpacing && !props.FSuppressSpacings)
+            return;
+
+        _writer.WriteStartElement("w", "compat", wNs);
+
+        if (props.FUsePrinterMetrics)
+        {
+            _writer.WriteStartElement("w", "usePrinterMetrics", wNs);
+            _writer.WriteEndElement();
+        }
+
+        if (props.FSuppressBottomSpacing)
+        {
+            _writer.WriteStartElement("w", "suppressBottomSpacing", wNs);
+            _writer.WriteEndElement();
+        }
+
+        if (props.FSuppressSpacings)
+        {
+            _writer.WriteStartElement("w", "suppressSpacingAtTopOfPage", wNs);
+            _writer.WriteEndElement();
+        }
+
+        _writer.WriteEndElement();
     }
 
     private static bool UsesEvenAndOddHeaders(DocumentModel? document)
@@ -357,8 +393,8 @@ public class SettingsWriter
             return false;
 
         return document.Properties.FFacingPages ||
-               document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven) ||
-               document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven);
+               document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h)) ||
+               document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
     }
     
 }
@@ -579,9 +615,9 @@ public class ContentTypesWriter
 
         
         // Headers and footers: register up to three header/footer parts
-        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst);
-        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd);
-        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven);
+        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
+        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
+        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
 
         if (hasHeaderFirst)
         {
@@ -596,9 +632,9 @@ public class ContentTypesWriter
             WriteOverride("/word/header3.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
         }
         
-        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst);
-        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd);
-        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven);
+        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
+        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
+        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
 
         if (hasFooterFirst)
         {

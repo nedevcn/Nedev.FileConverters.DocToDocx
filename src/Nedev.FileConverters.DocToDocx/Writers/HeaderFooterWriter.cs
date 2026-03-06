@@ -1,6 +1,7 @@
 using System.Text;
 using System.Xml;
 using Nedev.FileConverters.DocToDocx.Models;
+using Nedev.FileConverters.DocToDocx.Utils;
 
 namespace Nedev.FileConverters.DocToDocx.Writers;
 
@@ -55,6 +56,12 @@ public class HeaderFooterWriter
     /// </summary>
     private void WriteHeaderFooterContent(HeaderFooterModel headerFooter, DocumentModel document, bool isHeader)
     {
+        if (!HeaderFooterContentHelper.HasUsableContent(headerFooter))
+        {
+            WriteDefaultHeaderFooterParagraph();
+            return;
+        }
+
         if (headerFooter.Paragraphs != null && headerFooter.Paragraphs.Count > 0)
         {
             var docWriter = new DocumentWriter(_writer);

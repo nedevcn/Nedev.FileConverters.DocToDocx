@@ -107,6 +107,12 @@ public class HeaderFooterReader
             {
                 int currentCp = cpArray[baseIdx + t];
                 int nextCp = cpArray[baseIdx + t + 1];
+                if (currentCp < 0 || currentCp >= _fib.CcpHdd)
+                    continue;
+                if (nextCp < 0)
+                    continue;
+                if (nextCp > _fib.CcpHdd)
+                    nextCp = _fib.CcpHdd;
                 int length = nextCp - currentCp;
 
                 if (length <= 0) continue;

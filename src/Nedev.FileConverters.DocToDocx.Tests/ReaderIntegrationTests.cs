@@ -543,5 +543,38 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 _output.WriteLine($"P[{para.Index}] type={para.Type} nesting={para.NestingLevel} listId={para.ListFormatId} listLvl={para.ListLevel} text='{para.Text.Replace("\u0007", "<CELL>")}'");
             }
         }
+
+        [Fact]
+        public void Convert_ChineseSample_DoesNotEmitOversizedHeaderFooterGarbage()
+        {
+            string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            string samplePath = Path.Combine(repoRoot, "tests", "渠道授权协议v5.doc");
+            Assert.True(File.Exists(samplePath), $"Sample not found: {samplePath}");
+
+            string outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".docx");
+
+            try
+            {
+                DocToDocxConverter.Convert(samplePath, outputPath, enableHyperlinks: false);
+
+                using var zip = new System.IO.Compression.ZipArchive(File.OpenRead(outputPath), System.IO.Compression.ZipArchiveMode.Read);
+                foreach (var name in new[] { "word/header1.xml", "word/header2.xml", "word/header3.xml", "word/footer1.xml", "word/footer2.xml", "word/footer3.xml" })
+                {
+                    var entry = zip.GetEntry(name);
+                    if (entry == null)
+                        continue;
+
+                    var xml = new StreamReader(entry.Open()).ReadToEnd();
+                    var textOnly = Regex.Replace(xml, "<[^>]+>", string.Empty);
+                    var visibleChars = textOnly.Count(ch => !char.IsWhiteSpace(ch));
+                    Assert.True(visibleChars <= 256, $"Expected {name} to stay compact, but it had {visibleChars} visible chars.");
+                }
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
     }
 }

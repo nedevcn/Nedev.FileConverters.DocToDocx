@@ -78,10 +78,6 @@ public class StylesWriter
         
         _writer.WriteStartElement("w", "pPrDefault", wNs);
         _writer.WriteStartElement("w", "pPr", wNs);
-        _writer.WriteStartElement("w", "spacing", wNs);
-        _writer.WriteAttributeString("w", "line", wNs, "276");
-        _writer.WriteAttributeString("w", "lineRule", wNs, "auto");
-        _writer.WriteEndElement();
         _writer.WriteEndElement();
         _writer.WriteEndElement();
         
@@ -539,14 +535,15 @@ public class StylesWriter
         // still written at the document level by DocumentWriter.
 
         // Spacing
-        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing != 0)
+        bool hasExplicitLineSpacing = props.LineSpacing != 240 || props.LineSpacingMultiple != 1;
+        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || hasExplicitLineSpacing)
         {
             _writer.WriteStartElement("w", "spacing", wNs);
             if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
             if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
-            if (props.LineSpacing != 0)
+            if (hasExplicitLineSpacing)
             {
                 int lineVal = props.LineSpacing;
                 string lineRule;

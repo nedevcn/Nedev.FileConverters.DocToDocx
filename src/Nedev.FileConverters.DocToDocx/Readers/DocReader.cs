@@ -371,11 +371,18 @@ public class DocReader : IDisposable
                 foreach (var hf in _headerFooterReader.Headers.Concat(_headerFooterReader.Footers))
                 {
                     int headerStoryStartCp = _fibReader.CcpText + _fibReader.CcpFtn;
-                    int absoluteStartCp = headerStoryStartCp + hf.CharacterPosition;
-                    int absoluteEndCp = absoluteStartCp + hf.CharacterLength;
-                    hf.Paragraphs = ParseParagraphsRange(_textReader.Text, absoluteStartCp, absoluteEndCp, _globalChpMap, _globalPapMap, ref _globalImageCounter);
+                    int headerStoryEndCp = headerStoryStartCp + _fibReader.CcpHdd;
+                    int absoluteStartCp = Math.Clamp(headerStoryStartCp + hf.CharacterPosition, headerStoryStartCp, headerStoryEndCp);
+                    int absoluteEndCp = Math.Clamp(absoluteStartCp + hf.CharacterLength, absoluteStartCp, headerStoryEndCp);
+                    var paragraphs = ParseParagraphsRange(_textReader.Text, absoluteStartCp, absoluteEndCp, _globalChpMap, _globalPapMap, ref _globalImageCounter);
+                    hf.Paragraphs = HeaderFooterParagraphsLookReasonable(hf.Text, paragraphs)
+                        ? paragraphs
+                        : new List<ParagraphModel>();
                 }
             }
+
+            _headerFooterReader.Headers.RemoveAll(h => !HeaderFooterContentHelper.HasUsableContent(h));
+            _headerFooterReader.Footers.RemoveAll(f => !HeaderFooterContentHelper.HasUsableContent(f));
 
             Document.HeadersFooters.Headers = _headerFooterReader.Headers;
             Document.HeadersFooters.Footers = _headerFooterReader.Footers;
@@ -385,6 +392,41 @@ public class DocReader : IDisposable
         ExtractVbaProject();
 
         IsLoaded = true;
+    }
+
+    private static bool HeaderFooterParagraphsLookReasonable(string extractedText, List<ParagraphModel> paragraphs)
+    {
+        if (paragraphs == null || paragraphs.Count == 0)
+            return false;
+
+        var paragraphText = NormalizeHeaderFooterComparisonText(string.Concat(paragraphs.Select(p => p.Text)));
+        if (paragraphText.Length == 0)
+            return false;
+
+        var extracted = NormalizeHeaderFooterComparisonText(extractedText);
+        if (extracted.Length == 0)
+            return paragraphText.Length <= 64;
+
+        if (paragraphText.Length > Math.Max(96, extracted.Length * 4))
+            return false;
+
+        return paragraphText.Contains(extracted, StringComparison.Ordinal) ||
+               extracted.Contains(paragraphText, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeHeaderFooterComparisonText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            if (!char.IsWhiteSpace(ch))
+                sb.Append(ch);
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>

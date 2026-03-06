@@ -638,8 +638,8 @@ public partial class DocumentWriter
     private static bool UsesEvenAndOddHeaders(DocumentModel document)
     {
         return document.Properties.FFacingPages ||
-               document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven) ||
-               document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven);
+               document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h)) ||
+               document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
     }
 
     /// <summary>
@@ -860,14 +860,16 @@ public partial class DocumentWriter
         }
 
         // 8. spacing
-        if (props != null && (props.SpaceBefore > 0 || props.SpaceAfter > 0 || props.LineSpacing != 0))
+        bool hasExplicitLineSpacing = props != null &&
+            (props.LineSpacing != 240 || props.LineSpacingMultiple != 1);
+        if (props != null && (props.SpaceBefore > 0 || props.SpaceAfter > 0 || hasExplicitLineSpacing))
         {
             _writer.WriteStartElement("w", "spacing", wNs);
             if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
             if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
-            if (props.LineSpacing != 0)
+            if (hasExplicitLineSpacing)
             {
                 // In MS-DOC LSPD: fMultLinespace=1 means proportional (auto),
                 // fMultLinespace=0 means absolute. Negative dyaLine = exact,
