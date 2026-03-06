@@ -168,6 +168,7 @@ public class ParagraphModel
 {
     public int Index { get; set; }
     public List<RunModel> Runs { get; set; } = new();
+    public string RawText { get; set; } = string.Empty;
     public ParagraphProperties? Properties { get; set; }
     public ParagraphType Type { get; set; } = ParagraphType.Normal;
     public int TableRowIndex { get; set; } = -1;

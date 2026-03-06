@@ -617,16 +617,18 @@ public class DocReader : IDisposable
             var paragraph = new ParagraphModel
             {
                 Index = paragraphIndex++,
+                RawText = paraText,
                 Type = ParagraphType.Normal,
                 Properties = pap != null 
                     ? _fkpParser!.ConvertToParagraphProperties(pap, Document.Styles)
                     : new ParagraphProperties(),
+                NestingLevel = pap?.InTable == true ? Math.Max(1, pap.Itap) : (pap?.Itap ?? 0),
                 ListFormatId = pap?.ListFormatId ?? 0,
                 ListLevel = pap?.ListLevel ?? 0
             };
 
             // Detect special paragraph types
-            if (paraText.Contains('\x07'))
+            if (paraText.Contains('\x07') || pap?.InTable == true || (pap?.Itap ?? 0) > 0)
             {
                 // Contains cell end mark — this is a table cell paragraph
                 paragraph.Type = ParagraphType.TableCell;

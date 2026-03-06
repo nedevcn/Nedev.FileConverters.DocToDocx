@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Xunit;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Nedev.FileConverters.DocToDocx.Readers;
 using Nedev.FileConverters.DocToDocx.Cli;
 using Nedev.FileConverters.DocToDocx.Models;
@@ -471,6 +472,74 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             {
                 if (File.Exists(outputPath))
                     File.Delete(outputPath);
+            }
+        }
+
+        [Fact]
+        public void Convert_ChineseSample_RebuildsFirstPageHeaderTable()
+        {
+            string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            string samplePath = Path.Combine(repoRoot, "tests", "渠道授权协议v5.doc");
+            Assert.True(File.Exists(samplePath), $"Sample not found: {samplePath}");
+
+            string outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+            try
+            {
+                DocToDocxConverter.Convert(samplePath, outputPath, enableHyperlinks: false);
+
+                using var archive = new System.IO.Compression.ZipArchive(File.OpenRead(outputPath), System.IO.Compression.ZipArchiveMode.Read);
+                string documentXml = new StreamReader(archive.GetEntry("word/document.xml")!.Open()).ReadToEnd();
+
+                int bodyIndex = documentXml.IndexOf("<w:body>", StringComparison.Ordinal);
+                int tableIndex = documentXml.IndexOf("<w:tbl>", StringComparison.Ordinal);
+                Assert.True(bodyIndex >= 0 && tableIndex > bodyIndex, "Expected a table in the document body.");
+
+                string beforeFirstTable = documentXml.Substring(bodyIndex, tableIndex - bodyIndex);
+                Assert.Contains("<w:jc w:val=\"center\" />", beforeFirstTable);
+                Assert.Contains("渠道代理协议", beforeFirstTable);
+
+                int tableEndIndex = documentXml.IndexOf("</w:tbl>", tableIndex, StringComparison.Ordinal);
+                Assert.True(tableEndIndex > tableIndex, "Expected the first table to be closed.");
+
+                string firstTableXml = documentXml.Substring(tableIndex, tableEndIndex - tableIndex);
+                Assert.Equal(6, Regex.Matches(firstTableXml, "<w:tr(?=[ >])").Count);
+                Assert.Equal(12, Regex.Matches(firstTableXml, "<w:tc(?=[ >])").Count);
+                Assert.Contains("账号：121928482010902", firstTableXml);
+                Assert.Contains("账号：154408672", firstTableXml);
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
+
+        [Fact]
+        public void Diagnose_ChineseSample_FirstPageStructure()
+        {
+            string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            string samplePath = Path.Combine(repoRoot, "tests", "渠道授权协议v5.doc");
+            Assert.True(File.Exists(samplePath), $"Sample not found: {samplePath}");
+
+            using var reader = new DocReader(samplePath);
+            reader.Load();
+
+            var textReader = typeof(DocReader)
+                .GetField("_textReader", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(reader) as Nedev.FileConverters.DocToDocx.Readers.TextReader;
+            Assert.NotNull(textReader);
+
+            string preview = textReader!.Text.Substring(0, Math.Min(600, textReader.Text.Length))
+                .Replace("\r", "<CR>")
+                .Replace("\n", "<LF>")
+                .Replace("\u0007", "<CELL>");
+            _output.WriteLine("RAW PREVIEW: " + preview);
+            _output.WriteLine($"Tables={reader.Document.Tables.Count}, Paragraphs={reader.Document.Paragraphs.Count}");
+
+            foreach (var para in reader.Document.Paragraphs.Take(12))
+            {
+                _output.WriteLine($"P[{para.Index}] type={para.Type} nesting={para.NestingLevel} listId={para.ListFormatId} listLvl={para.ListLevel} text='{para.Text.Replace("\u0007", "<CELL>")}'");
             }
         }
     }
