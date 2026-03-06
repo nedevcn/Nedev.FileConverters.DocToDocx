@@ -449,46 +449,28 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
-        public void Diagnose_ChineseSample_TextExtraction()
+        public void Convert_ChineseSample_WritesVisibleText()
         {
             string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
             string samplePath = Path.Combine(repoRoot, "tests", "渠道授权协议v5.doc");
             Assert.True(File.Exists(samplePath), $"Sample not found: {samplePath}");
 
-            using var reader = new DocReader(samplePath);
-            reader.Load();
-
-            var model = reader.Document;
-            Assert.NotNull(model);
-
-            var textReader = typeof(DocReader)
-                .GetField("_textReader", BindingFlags.NonPublic | BindingFlags.Instance)
-                ?.GetValue(reader) as Nedev.FileConverters.DocToDocx.Readers.TextReader;
-            var fib = typeof(DocReader)
-                .GetField("_fibReader", BindingFlags.NonPublic | BindingFlags.Instance)
-                ?.GetValue(reader) as FibReader;
-
-            Assert.NotNull(textReader);
-            Assert.NotNull(fib);
-
-            _output.WriteLine($"Sample path: {samplePath}");
-            _output.WriteLine($"FIB ccpText={fib!.CcpText} ccpHdd={fib.CcpHdd} ccpFtn={fib.CcpFtn} lid=0x{fib.Lid:X4}");
-            _output.WriteLine($"Global text length={textReader!.Text.Length}");
-            _output.WriteLine($"Paragraph count={model!.Paragraphs.Count}");
-
-            foreach (var piece in textReader.Pieces.Take(12))
+            string outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".docx");
+            try
             {
-                _output.WriteLine($"Piece cp=[{piece.CpStart},{piece.CpEnd}) unicode={piece.IsUnicode} fc={piece.FileOffset} raw={piece.RawFcMasked}");
+                DocToDocxConverter.Convert(samplePath, outputPath, enableHyperlinks: false);
+
+                using var archive = new System.IO.Compression.ZipArchive(File.OpenRead(outputPath), System.IO.Compression.ZipArchiveMode.Read);
+                var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
+
+                Assert.Contains("渠道代理协议", documentXml);
+                Assert.Contains("甲方", documentXml);
+                Assert.Contains("乙方", documentXml);
             }
-
-            string visibleText = string.Concat(model.Paragraphs.SelectMany(p => p.Runs).Select(r => r.Text));
-            _output.WriteLine($"Visible text length={visibleText.Length}");
-            _output.WriteLine("Visible text preview: " + visibleText.Substring(0, Math.Min(300, visibleText.Length)));
-
-            foreach (var paragraph in model.Paragraphs.Take(12))
+            finally
             {
-                string paraText = string.Concat(paragraph.Runs.Select(r => r.Text));
-                _output.WriteLine($"Paragraph[{paragraph.Index}] len={paraText.Length} text='{paraText}'");
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
             }
         }
     }

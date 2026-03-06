@@ -450,15 +450,13 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
-        public void SanitizeXmlString_RemovesExoticRuns()
+        public void SanitizeXmlString_PreservesCjkPunctuation()
         {
-            // verify that any run containing characters outside the ASCII + CJK
-            // set is returned as an empty string.
             var method = typeof(Nedev.FileConverters.DocToDocx.Writers.DocumentWriter)
                 .GetMethod("SanitizeXmlString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-            string input = "HelloᔗWorld中文";
+            string input = "渠道代理协议（合同编号：202107010001）";
             string cleaned = (string)method.Invoke(null, new object[] { input })!;
-            Assert.Equal(string.Empty, cleaned);
+            Assert.Equal(input, cleaned);
         }
 
         [Fact]

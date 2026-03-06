@@ -1907,52 +1907,7 @@ public partial class DocumentWriter
                 }
             }
         }
-        // if resulting string contains any characters outside the sets we
-        // explicitly support, or the good/bad ratio is too low, we assume it
-        // came from a binary blob and drop the entire run.  Valid characters
-        // include ASCII letters/digits/punctuation/space/tab/newline, plus the
-        // common CJK ideograph ranges.  Anything else (e.g. Canadian syllabics,
-        // braille, emoji, etc.) is considered exotic and removed wholesale.
-        string result = sb.ToString();
-        if (result.Length > 0)
-        {
-            bool hasBad = false;
-            int good = 0;
-            foreach (char ch in result)
-            {
-                if (IsAllowed(ch))
-                {
-                    good++;
-                }
-                else
-                {
-                    hasBad = true;
-                }
-            }
-
-            // drop if any bad characters were seen, or if good characters are less
-            // than 75% of the string length (empirically catches mixed garbage).
-            if (hasBad || good * 4 < result.Length * 3)
-                return string.Empty;
-        }
-        return result;
-
-        static bool IsAllowed(char ch)
-        {
-            if (ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ') return true;
-            if (ch <= 0x007F)
-            {
-                return char.IsLetterOrDigit(ch) || char.IsPunctuation(ch);
-            }
-            return IsCjkIdeograph(ch);
-        }
-
-        static bool IsCjkIdeograph(char c)
-        {
-            return (c >= 0x4E00 && c <= 0x9FFF) ||
-                   (c >= 0x3400 && c <= 0x4DBF) ||
-                   (c >= 0x20000 && c <= 0x2A6DF);
-        }
+        return sb.ToString();
     }
 
     private string GenerateRsid()
