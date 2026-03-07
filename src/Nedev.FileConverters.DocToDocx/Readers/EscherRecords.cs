@@ -30,6 +30,9 @@ public class EscherRecord
 /// </summary>
 public static class EscherReader
 {
+    private const ushort OfficeArtTypeMin = 0xF000;
+    private const ushort OfficeArtTypeMax = 0xF122;
+
     public static List<EscherRecord> ReadAll(BinaryReader reader, long maxBytes)
     {
         var records = new List<EscherRecord>();
@@ -54,6 +57,60 @@ public static class EscherReader
         }
 
         return records;
+    }
+
+    public static List<EscherRecord> ReadAllWithResync(byte[] data)
+    {
+        var records = new List<EscherRecord>();
+        if (data == null || data.Length < 8)
+            return records;
+
+        var offset = 0;
+        while (offset + 8 <= data.Length)
+        {
+            if (TryReadRecordAt(data, offset, out var record, out var consumed))
+            {
+                records.Add(record!);
+                offset += consumed;
+                continue;
+            }
+
+            offset++;
+        }
+
+        return records;
+    }
+
+    private static bool TryReadRecordAt(byte[] data, int offset, out EscherRecord? record, out int consumed)
+    {
+        record = null;
+        consumed = 0;
+
+        if (offset < 0 || offset + 8 > data.Length)
+            return false;
+
+        ushort header = BitConverter.ToUInt16(data, offset);
+        ushort ver = (ushort)(header & 0x000F);
+        ushort type = BitConverter.ToUInt16(data, offset + 2);
+        uint length = BitConverter.ToUInt32(data, offset + 4);
+
+        if (ver > 0x000F)
+            return false;
+        if (type < OfficeArtTypeMin || type > OfficeArtTypeMax)
+            return false;
+
+        long totalLength = 8L + length;
+        if (totalLength <= 8 || offset + totalLength > data.Length)
+            return false;
+
+        using var ms = new MemoryStream(data, offset, (int)totalLength, writable: false);
+        using var br = new BinaryReader(ms, Encoding.Default, leaveOpen: true);
+        record = ReadRecord(br);
+        if (record == null)
+            return false;
+
+        consumed = (int)totalLength;
+        return true;
     }
 
     public static EscherRecord? ReadRecord(BinaryReader reader)
@@ -126,6 +183,11 @@ public class OfficeArtReader
         using var br = new BinaryReader(ms, Encoding.Default, leaveOpen: true);
         var maxBytes = ms.Length;
         RootRecords = EscherReader.ReadAll(br, maxBytes);
+
+        if (RootRecords.Count == 0)
+        {
+            RootRecords = EscherReader.ReadAllWithResync(ms.ToArray());
+        }
     }
 }
 

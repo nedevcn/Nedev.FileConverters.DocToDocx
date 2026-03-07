@@ -1,3 +1,4 @@
+using System.Text;
 using Nedev.FileConverters.DocToDocx.Models;
 
 namespace Nedev.FileConverters.DocToDocx.Readers;
@@ -11,6 +12,10 @@ public static class OfficeArtMapper
     // Escher record type constants (subset)
     private const ushort RecordTypeSpContainer = 0xF004;
     private const ushort RecordTypeSp = 0xF00A;
+    private const ushort RecordTypeOpt = 0xF00B;
+    private const ushort RecordTypeTertiaryOpt = 0xF122;
+    private const ushort PropertyIdGtextUnicode = 192;
+    private const ushort PropertyIdWzName = 896;
 
     public static void AttachShapes(DocumentModel document, OfficeArtReader? officeArtReader, IReadOnlyList<FspaInfo>? fspaAnchors)
     {
@@ -112,7 +117,7 @@ public static class OfficeArtMapper
                 shapeId = BitConverter.ToInt32(child.Data, 0);
                 mappedType = MapMsosptToShapeType(child.Instance);
             }
-            else if (child.Type == 0xF00B) // RecordTypeOpt
+            else if (child.Type == RecordTypeOpt || child.Type == RecordTypeTertiaryOpt)
             {
                 // We'll parse properties from the OPT record later if we have a shape.
             }
@@ -140,8 +145,7 @@ public static class OfficeArtMapper
         };
 
         // Parse OPT properties if present
-        var opt = spContainer.Children.FirstOrDefault(c => c.Type == 0xF00B);
-        if (opt != null)
+        foreach (var opt in spContainer.Children.Where(c => c.Type == RecordTypeOpt || c.Type == RecordTypeTertiaryOpt))
         {
             ParseOptProperties(opt.Data, shape, spContainer);
         }
@@ -168,6 +172,23 @@ public static class OfficeArtMapper
 
             switch (propId)
             {
+                case PropertyIdGtextUnicode:
+                case PropertyIdWzName:
+                    if (fComplex)
+                    {
+                        var textData = ParseComplexProperty(container, propId);
+                        var text = DecodeOfficeArtString(textData);
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            shape.Text = text;
+                            if (shape.Type == ShapeType.Unknown)
+                            {
+                                shape.Type = ShapeType.Textbox;
+                            }
+                        }
+                    }
+                    break;
+
                 // Cropping (16.16 fixed point)
                 case 257: shape.CropTop = (int)propValue; break;
                 case 258: shape.CropBottom = (int)propValue; break;
@@ -186,14 +207,14 @@ public static class OfficeArtMapper
                 case 321: // pVertices (complex)
                     if (fComplex)
                     {
-                        var vertexData = ParseComplexProperty(container, i, propId);
+                        var vertexData = ParseComplexProperty(container, propId);
                         if (vertexData != null) ParseVertices(vertexData, shape);
                     }
                     break;
                 case 322: // pSegmentInfo (complex)
                     if (fComplex)
                     {
-                        var segmentData = ParseComplexProperty(container, i, propId);
+                        var segmentData = ParseComplexProperty(container, propId);
                         if (segmentData != null) ParseSegments(segmentData, shape);
                     }
                     break;
@@ -223,50 +244,57 @@ public static class OfficeArtMapper
         return shape.CustomGeometry;
     }
 
-    private static byte[]? ParseComplexProperty(EscherRecord? container, int propertyIndex, ushort propId)
+    private static string? DecodeOfficeArtString(byte[]? data)
+    {
+        if (data == null || data.Length == 0)
+            return null;
+
+        string value;
+        if ((data.Length & 1) == 0)
+        {
+            value = Encoding.Unicode.GetString(data);
+        }
+        else
+        {
+            value = Encoding.Default.GetString(data);
+        }
+
+        return value.TrimEnd('\0', '\r', '\n', ' ');
+    }
+
+    private static byte[]? ParseComplexProperty(EscherRecord? container, ushort propId)
     {
         if (container == null) return null;
-        // Complex property data is stored in the 0xF011 (RecordTypeTertiaryOpt) or 
-        // 0xF00B (RecordTypeOpt) record's tail or in a subsequent record.
-        // Actually, Escher standard: if fComplex is set, the propValue IS the size (count), 
-        // and the data follows the array of property headers.
-        
-        // This is a simplification: in simple Opt records, the complex data starts after the 
-        // fixed-size (6-byte) property headers.
-        // We'll look at the container's Opt record data.
-        var opt = container.Children.FirstOrDefault(c => c.Type == 0xF00B || c.Type == 0xF011);
-        if (opt == null) return null;
-
-        // Find how many properties are defined to skip the headers
-        int propCount = BitConverter.ToUInt16(opt.Data, 0); // Oops, Opt doesn't have a 2-byte count at the start!
-        // Wait, MS-ODRAW 2.1.1: The OfficeArtOPT record payload is an array of OfficeArtOPTEntry.
-        // The first OfficeArtOPTEntry.opid with bit 24 set to 1 indicates the start of complex data? No.
-        
-        // Actually, the simplest way is to look at the 'instance' of the Opt record - it's the count.
-        int totalProps = opt.Instance;
-        int headersSize = totalProps * 6;
-        
-        // Complex data starts after all headers. But which complex data?
-        // They are stored in order of their appearance in the headers with fComplex set.
-        int complexOffset = headersSize;
-        int complexDataIndex = 0;
-        
-        for (int i = 0; i < totalProps; i++)
+        foreach (var opt in container.Children.Where(c => c.Type == RecordTypeOpt || c.Type == RecordTypeTertiaryOpt))
         {
-            ushort entryIdFlags = BitConverter.ToUInt16(opt.Data, i * 6);
-            uint entryValue = BitConverter.ToUInt32(opt.Data, i * 6 + 2);
-            ushort entryId = (ushort)(entryIdFlags & 0x3FFF);
-            bool entryComplex = (entryIdFlags & 0x8000) != 0;
+            int totalProps = Math.Min(opt.Instance, opt.Data.Length / 6);
+            int headersSize = totalProps * 6;
+            int complexOffset = headersSize;
 
-            if (entryComplex)
+            for (int i = 0; i < totalProps; i++)
             {
-                if (entryId == propId) // This is the one we want
+                ushort entryIdFlags = BitConverter.ToUInt16(opt.Data, i * 6);
+                uint entryValue = BitConverter.ToUInt32(opt.Data, i * 6 + 2);
+                ushort entryId = (ushort)(entryIdFlags & 0x3FFF);
+                bool entryComplex = (entryIdFlags & 0x8000) != 0;
+
+                if (!entryComplex)
                 {
-                    if (complexOffset + entryValue > opt.Data.Length) return null;
+                    continue;
+                }
+
+                if (complexOffset + entryValue > opt.Data.Length)
+                {
+                    return null;
+                }
+
+                if (entryId == propId)
+                {
                     byte[] complexData = new byte[entryValue];
                     Array.Copy(opt.Data, complexOffset, complexData, 0, (int)entryValue);
                     return complexData;
                 }
+
                 complexOffset += (int)entryValue;
             }
         }
