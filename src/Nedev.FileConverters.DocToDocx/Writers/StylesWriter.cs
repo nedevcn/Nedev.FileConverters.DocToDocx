@@ -86,41 +86,205 @@ public class StylesWriter
     
     private void WriteParagraphStyles(DocumentModel document)
     {
-        // Write Normal style
-        WriteNormalStyle();
-        
-        // Write Heading styles
+        var writtenStyleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        WriteKnownParagraphStyle(document, 0, "Normal", () => WriteNormalStyle(), writtenStyleIds);
+
         for (int i = 1; i <= 9; i++)
         {
-            WriteHeadingStyle(i);
+            var headingId = $"Heading{i}";
+            var level = i;
+            WriteKnownParagraphStyle(document, level, headingId, () => WriteHeadingStyle(level), writtenStyleIds);
         }
-        
-        // Write other common styles
-        WriteStyle("Title", "Title", "Normal", 56, true, false);
-        WriteStyle("Subtitle", "Subtitle", "Normal", 28, false, true);
-        WriteStyle("Quote", "Quote", "Normal", 22, false, false, true);
-        WriteStyle("ListParagraph", "List Paragraph", "Normal", 22, false, false);
-        WriteStyle("NoSpacing", "No Spacing", "Normal", 22, false, false);
-        
-        // Write Header and Footer styles
+
+        WriteKnownParagraphStyle(document, null, "Title", () => WriteStyle("Title", "Title", "Normal", 56, true, false), writtenStyleIds);
+        WriteKnownParagraphStyle(document, null, "Subtitle", () => WriteStyle("Subtitle", "Subtitle", "Normal", 28, false, true), writtenStyleIds);
+        WriteKnownParagraphStyle(document, null, "Quote", () => WriteStyle("Quote", "Quote", "Normal", 22, false, false, true), writtenStyleIds);
+        WriteKnownParagraphStyle(document, null, "ListParagraph", () => WriteStyle("ListParagraph", "List Paragraph", "Normal", 22, false, false), writtenStyleIds);
+        WriteKnownParagraphStyle(document, null, "NoSpacing", () => WriteStyle("NoSpacing", "No Spacing", "Normal", 22, false, false), writtenStyleIds);
+
         WriteHeaderFooterStyles();
-        
-        // Write any custom styles from document
-        var existingParaStyles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
-        { 
-            "Normal", "Title", "Subtitle", "Quote", "ListParagraph", "NoSpacing", "Header", "Footer" 
-        };
-        for (int i = 1; i <= 9; i++) existingParaStyles.Add($"Heading{i}");
+        writtenStyleIds.Add("Header");
+        writtenStyleIds.Add("Footer");
 
         foreach (var style in document.Styles.Styles.Where(s => s.Type == StyleType.Paragraph))
         {
             var id = StyleHelper.GetParagraphStyleId(style.StyleId, style.Name);
-            if (!existingParaStyles.Contains(id))
+            if (writtenStyleIds.Contains(id))
             {
-                WriteCustomStyle(style);
-                existingParaStyles.Add(id);
+                continue;
+            }
+
+            WriteCustomStyle(style);
+            writtenStyleIds.Add(id);
+        }
+
+        foreach (var fallbackStyle in EnumerateReferencedParagraphStyleFallbacks(document, writtenStyleIds))
+        {
+            WriteCustomStyle(fallbackStyle);
+            writtenStyleIds.Add(StyleHelper.GetParagraphStyleId(fallbackStyle.StyleId, fallbackStyle.Name));
+        }
+    }
+
+    private void WriteKnownParagraphStyle(DocumentModel document, int? styleIndex, string styleId, Action writeDefaultStyle, ISet<string> writtenStyleIds)
+    {
+        if (TryGetParagraphStyleByXmlId(document, styleId, styleIndex, out var style))
+        {
+            WriteCustomStyle(style!);
+        }
+        else
+        {
+            writeDefaultStyle();
+        }
+
+        writtenStyleIds.Add(styleId);
+    }
+
+    private bool TryGetParagraphStyleByXmlId(DocumentModel document, string styleId, int? preferredStyleIndex, out StyleDefinition? style)
+    {
+        style = null;
+
+        if (document.Styles?.Styles == null || document.Styles.Styles.Count == 0)
+        {
+            return false;
+        }
+
+        if (preferredStyleIndex.HasValue)
+        {
+            style = document.Styles.Styles.FirstOrDefault(s =>
+                s.Type == StyleType.Paragraph &&
+                s.StyleId == preferredStyleIndex.Value &&
+                string.Equals(StyleHelper.GetParagraphStyleId(s.StyleId, s.Name), styleId, StringComparison.OrdinalIgnoreCase));
+            if (style != null)
+            {
+                return true;
             }
         }
+
+        style = document.Styles.Styles.FirstOrDefault(s =>
+            s.Type == StyleType.Paragraph &&
+            string.Equals(StyleHelper.GetParagraphStyleId(s.StyleId, s.Name), styleId, StringComparison.OrdinalIgnoreCase));
+        return style != null;
+    }
+
+    private IEnumerable<StyleDefinition> EnumerateReferencedParagraphStyleFallbacks(DocumentModel document, ISet<string> existingStyleIds)
+    {
+        var byStyleIndex = document.Paragraphs
+            .Where(p => p.Properties != null && p.Properties.StyleIndex >= 0)
+            .GroupBy(p => p.Properties!.StyleIndex)
+            .OrderBy(group => group.Key);
+
+        foreach (var group in byStyleIndex)
+        {
+            var styleId = StyleHelper.GetParagraphStyleId(group.Key, null);
+            if (existingStyleIds.Contains(styleId))
+            {
+                continue;
+            }
+
+            var sampleParagraph = group.FirstOrDefault();
+            var sampleProperties = sampleParagraph?.Properties;
+            var sampleRunProperties = sampleParagraph?.Runs
+                .Select(run => run.Properties)
+                .FirstOrDefault(props => props != null && RunPropertiesHelper.HasRunProperties(props));
+
+            yield return new StyleDefinition
+            {
+                StyleId = (ushort)group.Key,
+                Name = styleId,
+                Type = StyleType.Paragraph,
+                ParagraphProperties = sampleProperties == null ? new ParagraphProperties() : CloneParagraphProperties(sampleProperties),
+                RunProperties = sampleRunProperties == null ? new RunProperties() : CloneRunProperties(sampleRunProperties)
+            };
+        }
+    }
+
+    private static ParagraphProperties CloneParagraphProperties(ParagraphProperties source)
+    {
+        return new ParagraphProperties
+        {
+            StyleIndex = source.StyleIndex,
+            Alignment = source.Alignment,
+            IndentLeft = source.IndentLeft,
+            IndentRight = source.IndentRight,
+            IndentFirstLine = source.IndentFirstLine,
+            SpaceBefore = source.SpaceBefore,
+            SpaceAfter = source.SpaceAfter,
+            LineSpacing = source.LineSpacing,
+            LineSpacingMultiple = source.LineSpacingMultiple,
+            KeepWithNext = source.KeepWithNext,
+            KeepTogether = source.KeepTogether,
+            PageBreakBefore = source.PageBreakBefore,
+            BorderTop = source.BorderTop,
+            BorderBottom = source.BorderBottom,
+            BorderLeft = source.BorderLeft,
+            BorderRight = source.BorderRight,
+            Shading = source.Shading,
+            ListFormatId = source.ListFormatId,
+            ListLevel = source.ListLevel,
+            OutlineLevel = source.OutlineLevel,
+            NumberFormat = source.NumberFormat,
+            NumberText = source.NumberText,
+            SnapToGrid = source.SnapToGrid,
+            AutoSpaceDe = source.AutoSpaceDe,
+            AutoSpaceDn = source.AutoSpaceDn,
+            WordWrap = source.WordWrap,
+            Kinsoku = source.Kinsoku,
+            OverflowPunct = source.OverflowPunct,
+            TopLinePunct = source.TopLinePunct
+        };
+    }
+
+    private static RunProperties CloneRunProperties(RunProperties source)
+    {
+        return new RunProperties
+        {
+            FontIndex = source.FontIndex,
+            FontName = source.FontName,
+            FontSize = source.FontSize,
+            FontSizeCs = source.FontSizeCs,
+            IsBold = source.IsBold,
+            IsBoldCs = source.IsBoldCs,
+            IsItalic = source.IsItalic,
+            IsItalicCs = source.IsItalicCs,
+            IsUnderline = source.IsUnderline,
+            UnderlineType = source.UnderlineType,
+            IsStrikeThrough = source.IsStrikeThrough,
+            IsDoubleStrikeThrough = source.IsDoubleStrikeThrough,
+            IsSmallCaps = source.IsSmallCaps,
+            IsAllCaps = source.IsAllCaps,
+            IsHidden = source.IsHidden,
+            IsSuperscript = source.IsSuperscript,
+            IsSubscript = source.IsSubscript,
+            Color = source.Color,
+            BgColor = source.BgColor,
+            CharacterSpacingAdjustment = source.CharacterSpacingAdjustment,
+            Language = source.Language,
+            LanguageAsia = source.LanguageAsia,
+            LanguageCs = source.LanguageCs,
+            HighlightColor = source.HighlightColor,
+            RgbColor = source.RgbColor,
+            HasRgbColor = source.HasRgbColor,
+            IsOutline = source.IsOutline,
+            IsShadow = source.IsShadow,
+            IsEmboss = source.IsEmboss,
+            IsImprint = source.IsImprint,
+            Border = source.Border,
+            Kerning = source.Kerning,
+            Position = source.Position,
+            CharacterScale = source.CharacterScale,
+            EastAsianLayoutType = source.EastAsianLayoutType,
+            IsEastAsianVertical = source.IsEastAsianVertical,
+            IsEastAsianVerticalCompress = source.IsEastAsianVerticalCompress,
+            SnapToGrid = source.SnapToGrid,
+            RubyText = source.RubyText,
+            IsDeleted = source.IsDeleted,
+            IsInserted = source.IsInserted,
+            AuthorIndexDel = source.AuthorIndexDel,
+            AuthorIndexIns = source.AuthorIndexIns,
+            DateDel = source.DateDel,
+            DateIns = source.DateIns
+        };
     }
     
     private void WriteNormalStyle()

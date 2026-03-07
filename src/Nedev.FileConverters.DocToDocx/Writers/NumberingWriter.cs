@@ -6,6 +6,7 @@ namespace Nedev.FileConverters.DocToDocx.Writers;
 public class NumberingWriter
 {
     private readonly XmlWriter _writer;
+    private const string WNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
     public NumberingWriter(XmlWriter writer)
     {
@@ -15,14 +16,15 @@ public class NumberingWriter
     public void WriteNumbering(DocumentModel document)
     {
         _writer.WriteStartDocument();
-        _writer.WriteStartElement("w", "numbering", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-        _writer.WriteAttributeString("xmlns", "w", null, "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+        _writer.WriteStartElement("w", "numbering", WNs);
+        _writer.WriteAttributeString("xmlns", "w", null, WNs);
         _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
 
-        if (document.NumberingDefinitions.Count > 0)
+        var numberingDefinitions = BuildNumberingDefinitions(document);
+
+        if (numberingDefinitions.Count > 0)
         {
-            // Use NumberingDefinition.Id consistently as both abstractNumId and numId
-            foreach (var numDef in document.NumberingDefinitions)
+            foreach (var numDef in numberingDefinitions)
             {
                 var id = numDef.Id;
                 if (id <= 0)
@@ -43,53 +45,104 @@ public class NumberingWriter
         _writer.WriteEndDocument();
     }
 
+    private static List<NumberingDefinition> BuildNumberingDefinitions(DocumentModel document)
+    {
+        var definitions = document.NumberingDefinitions
+            .Where(definition => definition.Id > 0)
+            .GroupBy(definition => definition.Id)
+            .Select(group => group.First())
+            .OrderBy(definition => definition.Id)
+            .ToList();
+
+        var usedListIds = document.Paragraphs
+            .Select(paragraph => paragraph.Properties?.ListFormatId ?? paragraph.ListFormatId)
+            .Where(listId => listId > 0)
+            .Distinct()
+            .OrderBy(listId => listId)
+            .ToList();
+
+        foreach (var listId in usedListIds)
+        {
+            if (definitions.Any(definition => definition.Id == listId))
+            {
+                continue;
+            }
+
+            definitions.Add(CreateFallbackDefinition(listId));
+        }
+
+        definitions.Sort((left, right) => left.Id.CompareTo(right.Id));
+        return definitions;
+    }
+
+    private static NumberingDefinition CreateFallbackDefinition(int listId)
+    {
+        var definition = new NumberingDefinition
+        {
+            Id = listId
+        };
+
+        for (int level = 0; level < 9; level++)
+        {
+            definition.Levels.Add(new NumberingLevel
+            {
+                Level = level,
+                NumberFormat = NumberFormat.Decimal,
+                Text = $"%{level + 1}.",
+                Start = 1
+            });
+        }
+
+        return definition;
+    }
+
     private void WriteDefaultNumbering()
     {
-        _writer.WriteStartElement("w", "abstractNum");
-        _writer.WriteAttributeString("w", "abstractNumId", null, "0");
+        _writer.WriteStartElement("w", "abstractNum", WNs);
+        _writer.WriteAttributeString("w", "abstractNumId", WNs, "0");
 
-        _writer.WriteStartElement("w", "nsid");
-        _writer.WriteAttributeString("w", "val", null, "00000000");
+        _writer.WriteStartElement("w", "nsid", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "00000000");
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "multiLevelType");
-        _writer.WriteAttributeString("w", "val", null, "hybridMultilevel");
+        _writer.WriteStartElement("w", "multiLevelType", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "hybridMultilevel");
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "tmpl");
-        _writer.WriteAttributeString("w", "val", null, "00000000");
+        _writer.WriteStartElement("w", "tmpl", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "00000000");
         _writer.WriteEndElement();
 
         for (int lvl = 0; lvl < 9; lvl++)
         {
-            WriteLevel(lvl, NumberFormat.Decimal, " ", lvl + 1);
+            WriteLevel(lvl, NumberFormat.Decimal, $"%{lvl + 1}.", 1);
         }
 
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "num");
-        _writer.WriteAttributeString("w", "numId", null, "1");
-        _writer.WriteStartElement("w", "abstractNumId");
-        _writer.WriteAttributeString("w", "val", null, "0");
+        _writer.WriteStartElement("w", "num", WNs);
+        _writer.WriteAttributeString("w", "numId", WNs, "1");
+        _writer.WriteStartElement("w", "abstractNumId", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "0");
         _writer.WriteEndElement();
         _writer.WriteEndElement();
     }
 
     private void WriteAbstractNum(NumberingDefinition numDef, int abstractNumId)
     {
-        _writer.WriteStartElement("w", "abstractNum");
-        _writer.WriteAttributeString("w", "abstractNumId", null, abstractNumId.ToString());
+        _writer.WriteStartElement("w", "abstractNum", WNs);
+        _writer.WriteAttributeString("w", "abstractNumId", WNs, abstractNumId.ToString());
 
-        _writer.WriteStartElement("w", "nsid");
-        _writer.WriteAttributeString("w", "val", Convert.ToString(numDef.Id, 16).PadLeft(8, '0').ToUpper());
+        _writer.WriteStartElement("w", "nsid", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, Convert.ToString(numDef.Id, 16).PadLeft(8, '0').ToUpper());
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "multiLevelType");
-        _writer.WriteAttributeString("w", "val", null, "hybridMultilevel");
+        _writer.WriteStartElement("w", "multiLevelType", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "hybridMultilevel");
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "tmpl");
-        _writer.WriteAttributeString("w", "val", null, "00000000");
+        _writer.WriteStartElement("w", "tmpl", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "00000000");
         _writer.WriteEndElement();
 
         // Write levels from actual definition data
@@ -111,29 +164,29 @@ public class NumberingWriter
 
     private void WriteLevel(int level, NumberFormat numFmt, string prefix, int start)
     {
-        _writer.WriteStartElement("w", "lvl");
-        _writer.WriteAttributeString("w", "ilvl", null, level.ToString());
+        _writer.WriteStartElement("w", "lvl", WNs);
+        _writer.WriteAttributeString("w", "ilvl", WNs, level.ToString());
 
-        _writer.WriteStartElement("w", "start");
-        _writer.WriteAttributeString("w", "val", null, start.ToString());
+        _writer.WriteStartElement("w", "start", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, start.ToString());
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "numFmt");
-        _writer.WriteAttributeString("w", "val", null, GetNumberFormatValue(numFmt));
+        _writer.WriteStartElement("w", "numFmt", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, GetNumberFormatValue(numFmt));
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "lvlText");
-        _writer.WriteAttributeString("w", "val", null, prefix);
+        _writer.WriteStartElement("w", "lvlText", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, prefix);
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "lvlJc");
-        _writer.WriteAttributeString("w", "val", null, "left");
+        _writer.WriteStartElement("w", "lvlJc", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, "left");
         _writer.WriteEndElement();
 
-        _writer.WriteStartElement("w", "pPr");
-        _writer.WriteStartElement("w", "ind");
-        _writer.WriteAttributeString("w", "left", null, (720 + level * 720).ToString());
-        _writer.WriteAttributeString("w", "hanging", null, "360");
+        _writer.WriteStartElement("w", "pPr", WNs);
+        _writer.WriteStartElement("w", "ind", WNs);
+        _writer.WriteAttributeString("w", "left", WNs, (720 + level * 720).ToString());
+        _writer.WriteAttributeString("w", "hanging", WNs, "360");
         _writer.WriteEndElement();
         _writer.WriteEndElement(); // w:pPr
 
@@ -142,11 +195,11 @@ public class NumberingWriter
 
     private void WriteNum(int numId, int abstractNumId)
     {
-        _writer.WriteStartElement("w", "num");
-        _writer.WriteAttributeString("w", "numId", numId.ToString());
+        _writer.WriteStartElement("w", "num", WNs);
+        _writer.WriteAttributeString("w", "numId", WNs, numId.ToString());
 
-        _writer.WriteStartElement("w", "abstractNumId");
-        _writer.WriteAttributeString("w", "val", abstractNumId.ToString());
+        _writer.WriteStartElement("w", "abstractNumId", WNs);
+        _writer.WriteAttributeString("w", "val", WNs, abstractNumId.ToString());
         _writer.WriteEndElement();
 
         _writer.WriteEndElement();

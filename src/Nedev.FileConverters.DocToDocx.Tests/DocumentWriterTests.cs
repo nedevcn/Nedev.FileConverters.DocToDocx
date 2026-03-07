@@ -917,8 +917,11 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
                 var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
                 var stylesXml = new StreamReader(archive.GetEntry("word/styles.xml").Open()).ReadToEnd();
+                var numberingXml = new StreamReader(archive.GetEntry("word/numbering.xml").Open()).ReadToEnd();
                 var visibleText = Regex.Replace(documentXml, "<[^>]+>", string.Empty);
                 var xDocument = XDocument.Parse(documentXml);
+                var stylesDocument = XDocument.Parse(stylesXml);
+                var numberingDocument = XDocument.Parse(numberingXml);
                 XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
                 Assert.Contains("粗体斜体下划线中横线颜色背景色字体大小字体上标下标组合", visibleText);
@@ -938,6 +941,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 Assert.DoesNotContain("<w:del", documentXml, StringComparison.Ordinal);
                 Assert.DoesNotContain("<w:ins", documentXml, StringComparison.Ordinal);
                 Assert.Contains("styleId=\"Normal\"", stylesXml);
+                Assert.Equal(w.NamespaceName, numberingDocument.Root?.Name.NamespaceName);
 
                 var centeredParagraph = FindParagraphContainingText(xDocument, w, "居中");
                 Assert.Equal("center", centeredParagraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")?.Value);
@@ -959,7 +963,43 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                     .Select(attribute => attribute.Value)
                     .FirstOrDefault());
 
-                Assert.True(xDocument.Descendants(w + "numPr").Any(), "Expected numbered or bulleted list output for the sample indent section.");
+                var verticalParagraph = FindParagraphContainingText(xDocument, w, "纵向");
+                Assert.True(verticalParagraph.Descendants(w + "eastAsianLayout").Any(), "Expected the sample vertical text run to keep eastAsianLayout metadata.");
+
+                var referencedParagraphStyleIds = xDocument
+                    .Descendants(w + "pStyle")
+                    .Attributes(w + "val")
+                    .Select(attribute => attribute.Value)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                var definedParagraphStyleIds = stylesDocument
+                    .Descendants(w + "style")
+                    .Where(element => string.Equals(element.Attribute(w + "type")?.Value, "paragraph", StringComparison.Ordinal))
+                    .Attributes(w + "styleId")
+                    .Select(attribute => attribute.Value)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                Assert.All(referencedParagraphStyleIds, styleId =>
+                    Assert.Contains(styleId, definedParagraphStyleIds));
+
+                var usedNumIds = xDocument
+                    .Descendants(w + "numPr")
+                    .Elements(w + "numId")
+                    .Attributes(w + "val")
+                    .Select(attribute => attribute.Value)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                Assert.NotEmpty(usedNumIds);
+
+                var definedNumIds = numberingDocument
+                    .Descendants(w + "num")
+                    .Attributes(w + "numId")
+                    .Select(attribute => attribute.Value)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                Assert.All(usedNumIds, numId => Assert.Contains(numId, definedNumIds));
             }
             finally
             {
