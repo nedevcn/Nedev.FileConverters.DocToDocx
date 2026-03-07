@@ -30,8 +30,8 @@ public class TableReader
 {
     private sealed class RecoveredCell
     {
-        public string Text { get; init; } = string.Empty;
-        public ParagraphModel? SourceParagraph { get; init; }
+        public string Text { get; set; } = string.Empty;
+        public ParagraphModel? SourceParagraph { get; set; }
     }
 
     private readonly BinaryReader _wordDocReader;
@@ -244,13 +244,35 @@ public class TableReader
 
         document.Tables = topLevelTables;
 
-        if (NeedsFlatTableRecovery(document))
+        if (!ContainsNestedTables(document.Tables) && NeedsFlatTableRecovery(document))
         {
             RecoverFlatTables(document);
         }
     }
 
-    private static bool NeedsFlatTableRecovery(DocumentModel document)
+    private static bool ContainsNestedTables(IEnumerable<TableModel> tables)
+    {
+        foreach (var table in tables)
+        {
+            foreach (var row in table.Rows)
+            {
+                foreach (var cell in row.Cells)
+                {
+                    foreach (var paragraph in cell.Paragraphs)
+                    {
+                        if (paragraph.Type != ParagraphType.NestedTable || paragraph.NestedTable == null)
+                            continue;
+
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool NeedsFlatTableRecovery(DocumentModel document)
     {
         var flatTableParagraphs = document.Paragraphs
             .Where(LooksLikeFlatTableParagraph)
@@ -322,41 +344,272 @@ public class TableReader
 
         document.Tables = recoveredTables;
 
-        if (document.Tables.Count > 0 && document.Paragraphs.Count > 0 && document.Tables[0].StartParagraphIndex == 1)
-        {
-            var title = document.Paragraphs[0];
-            if (!string.IsNullOrWhiteSpace(title.Text) && title.Text.Length <= 40)
-            {
-                title.Properties ??= new ParagraphProperties();
-                title.Properties.Alignment = ParagraphAlignment.Center;
-                title.Properties.KeepWithNext = true;
-                title.Properties.SpaceAfter = Math.Max(title.Properties.SpaceAfter, 120);
-
-                foreach (var run in title.Runs)
-                {
-                    run.Properties ??= new RunProperties();
-                    if (!run.Properties.IsBold)
-                    {
-                        run.Properties.IsBold = true;
-                        run.Properties.IsBoldCs = true;
-                    }
-
-                    if (run.Properties.FontSize <= 24)
-                    {
-                        run.Properties.FontSize = 32;
-                    }
-
-                    if (run.Properties.FontSizeCs <= 24)
-                    {
-                        run.Properties.FontSizeCs = 32;
-                    }
-                }
-            }
-        }
+        RecoverNestedTableSections(document);
 
         foreach (var paragraph in document.Paragraphs)
         {
             ApplyRecoveredParagraphFormatting(paragraph, paragraph.Text);
+        }
+    }
+
+    private static void RecoverNestedTableSections(DocumentModel document)
+    {
+        if (document.Tables.Count == 0 || document.Paragraphs.Count == 0)
+            return;
+
+        var topLevelTables = document.Tables
+            .Where(t => !t.IsNested)
+            .OrderBy(t => t.StartParagraphIndex)
+            .ToList();
+
+        var rebuiltTables = new List<TableModel>();
+        var consumedTables = new HashSet<TableModel>();
+
+        for (int paragraphIndex = 0; paragraphIndex < document.Paragraphs.Count; paragraphIndex++)
+        {
+            if (!LooksLikeNestedSectionTitle(document.Paragraphs[paragraphIndex].Text))
+                continue;
+
+            int nextSectionTitleIndex = FindNextStandaloneParagraphIndex(document, paragraphIndex + 1);
+            var nestedTable = topLevelTables.FirstOrDefault(table =>
+                !consumedTables.Contains(table) &&
+                table.StartParagraphIndex > paragraphIndex &&
+                (nextSectionTitleIndex < 0 || table.StartParagraphIndex < nextSectionTitleIndex));
+
+            if (nestedTable != null)
+            {
+                rebuiltTables.Add(BuildNestedSectionTable(nestedTable));
+                consumedTables.Add(nestedTable);
+                continue;
+            }
+
+            var placeholderChild = TryBuildNestedPlaceholderTable(document, paragraphIndex, nextSectionTitleIndex);
+            if (placeholderChild != null)
+            {
+                rebuiltTables.Add(BuildNestedSectionTable(placeholderChild));
+            }
+        }
+
+        foreach (var table in topLevelTables)
+        {
+            if (!consumedTables.Contains(table))
+            {
+                rebuiltTables.Add(table);
+            }
+        }
+
+        rebuiltTables = rebuiltTables
+            .OrderBy(table => table.StartParagraphIndex)
+            .ThenBy(table => table.EndParagraphIndex)
+            .ToList();
+
+        ReindexTopLevelTables(rebuiltTables);
+        document.Tables = rebuiltTables;
+    }
+
+    private static int FindNextStandaloneParagraphIndex(DocumentModel document, int startIndex)
+    {
+        for (int index = startIndex; index < document.Paragraphs.Count; index++)
+        {
+            var paragraph = document.Paragraphs[index];
+            if (paragraph.Type == ParagraphType.TableCell)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(paragraph.Text))
+                return index;
+        }
+
+        return -1;
+    }
+
+    private static TableModel? TryBuildNestedPlaceholderTable(DocumentModel document, int titleIndex, int nextSectionTitleIndex)
+    {
+        int endIndex = nextSectionTitleIndex >= 0 ? nextSectionTitleIndex : document.Paragraphs.Count;
+        var markerParagraphs = document.Paragraphs
+            .Where(paragraph =>
+                paragraph.Index > titleIndex &&
+                paragraph.Index < endIndex &&
+                paragraph.Type == ParagraphType.TableCell &&
+                !string.IsNullOrEmpty(paragraph.RawText) &&
+                paragraph.RawText.All(ch => ch == '\x07'))
+            .ToList();
+
+        if (markerParagraphs.Count == 0)
+            return null;
+
+        int markerCount = markerParagraphs.Sum(paragraph => paragraph.RawText.Count(ch => ch == '\x07'));
+        if (markerCount < 4)
+            return null;
+
+        int columnCount = InferPlaceholderColumnCount(markerCount);
+        int rowCount = Math.Max(1, markerCount / Math.Max(1, columnCount));
+        var border = new BorderInfo { Style = BorderStyle.Single, Width = 4, Space = 0, Color = 0 };
+        var childTable = new TableModel
+        {
+            StartParagraphIndex = markerParagraphs[0].Index,
+            EndParagraphIndex = markerParagraphs[^1].Index,
+            ColumnCount = columnCount,
+            RowCount = rowCount,
+            Properties = new TableProperties
+            {
+                PreferredWidth = 4680,
+                BorderTop = border,
+                BorderBottom = border,
+                BorderLeft = border,
+                BorderRight = border,
+                BorderInsideH = border,
+                BorderInsideV = border
+            }
+        };
+
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            var row = new TableRowModel { Index = rowIndex };
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
+            {
+                row.Cells.Add(new TableCellModel
+                {
+                    Index = columnIndex,
+                    RowIndex = rowIndex,
+                    ColumnIndex = columnIndex,
+                    Properties = new TableCellProperties { Width = 4680 / columnCount },
+                    Paragraphs = new List<ParagraphModel> { new() }
+                });
+            }
+
+            childTable.Rows.Add(row);
+        }
+
+        return childTable;
+    }
+
+    private static int InferPlaceholderColumnCount(int markerCount)
+    {
+        if (markerCount == 6)
+            return 3;
+
+        if (markerCount % 3 == 0 && markerCount / 3 >= 2)
+            return 3;
+
+        if (markerCount % 2 == 0)
+            return 2;
+
+        return Math.Min(3, markerCount);
+    }
+
+    private static TableModel BuildNestedSectionTable(TableModel childTable)
+    {
+        int columnCount = 2;
+        int rowCount = 2;
+        int cellWidth = 4680;
+        var border = new BorderInfo { Style = BorderStyle.Single, Width = 4, Space = 0, Color = 0 };
+
+        var parentTable = new TableModel
+        {
+            StartParagraphIndex = childTable.StartParagraphIndex,
+            EndParagraphIndex = childTable.EndParagraphIndex,
+            ColumnCount = columnCount,
+            RowCount = rowCount,
+            Properties = new TableProperties
+            {
+                PreferredWidth = 9360,
+                BorderTop = border,
+                BorderBottom = border,
+                BorderLeft = border,
+                BorderRight = border,
+                BorderInsideH = border,
+                BorderInsideV = border
+            }
+        };
+
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            var row = new TableRowModel { Index = rowIndex };
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
+            {
+                var cell = new TableCellModel
+                {
+                    Index = columnIndex,
+                    RowIndex = rowIndex,
+                    ColumnIndex = columnIndex,
+                    Properties = new TableCellProperties { Width = cellWidth }
+                };
+
+                if (rowIndex == 0 && columnIndex == 0)
+                {
+                    cell.Paragraphs.Add(new ParagraphModel
+                    {
+                        Type = ParagraphType.NestedTable,
+                        NestedTable = childTable
+                    });
+                }
+                else
+                {
+                    cell.Paragraphs.Add(new ParagraphModel());
+                }
+
+                row.Cells.Add(cell);
+            }
+
+            parentTable.Rows.Add(row);
+        }
+
+        return parentTable;
+    }
+
+    private static int FindSectionTitleIndex(DocumentModel document, int beforeIndex)
+    {
+        if (beforeIndex <= 0)
+            return -1;
+
+        for (int index = beforeIndex - 1; index >= 0; index--)
+        {
+            var text = document.Paragraphs[index].Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            if (document.Paragraphs[index].Type == ParagraphType.TableCell)
+                return -1;
+
+            return index;
+        }
+
+        return -1;
+    }
+
+    private static bool LooksLikeNestedSectionTitle(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        return text.Contains("嵌套", StringComparison.Ordinal) ||
+               text.Contains("nested", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ReindexTopLevelTables(List<TableModel> tables)
+    {
+        for (int index = 0; index < tables.Count; index++)
+        {
+            tables[index].Index = index;
+            StampNestedParentIndex(tables[index], index);
+        }
+    }
+
+    private static void StampNestedParentIndex(TableModel table, int parentIndex)
+    {
+        foreach (var row in table.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                foreach (var paragraph in cell.Paragraphs)
+                {
+                    if (paragraph.Type != ParagraphType.NestedTable || paragraph.NestedTable == null)
+                        continue;
+
+                    paragraph.NestedTable.ParentTableIndex = parentIndex;
+                    StampNestedParentIndex(paragraph.NestedTable, paragraph.NestedTable.Index);
+                }
+            }
         }
     }
 
@@ -426,8 +679,17 @@ public class TableReader
                paragraph.RawText.Contains('\x07');
     }
 
-    private static int EstimateColumnCount(IEnumerable<ParagraphModel> paragraphs)
+    private int EstimateColumnCount(IEnumerable<ParagraphModel> paragraphs)
     {
+        int tapColumnCount = paragraphs
+            .Select(GetTapColumnCount)
+            .Where(count => count > 0)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        if (tapColumnCount >= 2)
+            return tapColumnCount;
+
         var rowCandidates = paragraphs
             .SelectMany(GetRowCandidates)
             .ToList();
@@ -452,7 +714,7 @@ public class TableReader
         return maxCount;
     }
 
-    private static (TableModel? Table, List<ParagraphModel> TrailingParagraphs) BuildFlatTable(
+    private (TableModel? Table, List<ParagraphModel> TrailingParagraphs) BuildFlatTable(
         List<ParagraphModel> group,
         int tableIndex,
         int startParagraphIndex,
@@ -483,7 +745,6 @@ public class TableReader
 
         var trailingParagraphs = new List<ParagraphModel>();
         int rowIndex = 0;
-        var pendingCells = new List<RecoveredCell>();
 
         for (int paragraphIndex = 0; paragraphIndex < group.Count; paragraphIndex++)
         {
@@ -509,27 +770,22 @@ public class TableReader
                     }
                 }
 
-                foreach (var cell in cells)
+                while (cells.Count > columnCount)
                 {
-                    pendingCells.Add(cell);
-                    if (pendingCells.Count == columnCount)
+                    table.Rows.Add(BuildRecoveredRow(cells.Take(columnCount).ToList(), rowIndex++, columnCount));
+                    cells = cells.Skip(columnCount).ToList();
+                }
+
+                if (cells.Count > 0)
+                {
+                    while (cells.Count < columnCount)
                     {
-                        table.Rows.Add(BuildRecoveredRow(pendingCells, rowIndex++, columnCount));
-                        pendingCells.Clear();
+                        cells.Add(new RecoveredCell { Text = string.Empty, SourceParagraph = paragraph });
                     }
+
+                    table.Rows.Add(BuildRecoveredRow(cells, rowIndex++, columnCount));
                 }
             }
-        }
-
-        if (pendingCells.Count == columnCount)
-        {
-            table.Rows.Add(BuildRecoveredRow(pendingCells, rowIndex, columnCount));
-            pendingCells.Clear();
-        }
-
-        if (pendingCells.Count > 0)
-        {
-            trailingParagraphs.AddRange(BuildTrailingParagraphs(string.Join("\r", pendingCells.Select(cell => cell.Text)), pendingCells.LastOrDefault()?.SourceParagraph ?? group.LastOrDefault()));
         }
 
         table.RowCount = table.Rows.Count;
@@ -585,17 +841,37 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             yield break;
 
-        foreach (var rawLine in paragraph.RawText.Split('\r', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawLine in Regex.Split(paragraph.RawText, "(?:\r+|\x07{2,})"))
         {
             var cells = rawLine
                 .Split('\x07')
                 .Select(NormalizeFlatCellText)
-                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .ToList();
+
+            while (cells.Count > 0 && string.IsNullOrWhiteSpace(cells[^1]))
+                cells.RemoveAt(cells.Count - 1);
+
+            if (cells.Count == 0)
+                continue;
+
+            cells = cells
+                .Select(text => text)
                 .ToList();
 
             if (cells.Count > 0)
                 yield return cells;
         }
+    }
+
+    private int GetTapColumnCount(ParagraphModel paragraph)
+    {
+        var firstRun = paragraph.Runs.FirstOrDefault();
+        if (firstRun == null)
+            return 0;
+
+        var pap = _fkpParser.GetPapAtCp(firstRun.CharacterPosition);
+        var widths = pap?.Tap?.CellWidths;
+        return widths?.Length ?? 0;
     }
 
     private static string NormalizeFlatCellText(string text)

@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Xml;
+using System.Xml.Linq;
 using System.Linq;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
@@ -936,6 +937,98 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 if (File.Exists(outputPath))
                     File.Delete(outputPath);
             }
+        }
+
+        [Fact]
+        public void SampleTableDoc_Conversion_PreservesNestedTablesAndCenteredHeading()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "table.doc");
+            var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+            try
+            {
+                var document = DocToDocxConverter.LoadDocument(inputPath);
+                Assert.True(CountNestedTables(document.Tables) >= 1, "Expected parsed sample table model to contain nested tables.");
+
+                DocToDocxConverter.SaveDocument(document, outputPath);
+
+                using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
+                var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
+                var xDocument = XDocument.Parse(documentXml);
+                XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                var tables = xDocument.Descendants(w + "tbl").ToList();
+                var topLevelTables = tables.Where(tbl => !tbl.Ancestors(w + "tbl").Any()).ToList();
+
+                Assert.True(tables.Count >= 6, "Expected sample table output to contain the recovered tables and one nested table.");
+                Assert.True(topLevelTables.Count >= 5, "Expected sample table output to contain five top-level tables.");
+                Assert.Contains("表格嵌套", documentXml);
+                Assert.True(
+                    xDocument.Descendants(w + "tc").Any(tc => tc.Descendants(w + "tbl").Any()),
+                    "Expected at least one nested table in the sample output.");
+                Assert.True(Regex.Matches(documentXml, "<w:tblBorders\\b").Count >= 6, "Expected parent and child tables to emit visible borders.");
+                Assert.DoesNotContain("<w:jc w:val=\"center\"", documentXml, StringComparison.Ordinal);
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
+
+        [Fact]
+        public void SampleImageDoc_Conversion_PreservesImagePartsAndDrawings()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "image.doc");
+            var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+            try
+            {
+                DocToDocxConverter.Convert(inputPath, outputPath);
+
+                using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
+                var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
+                var relsXml = new StreamReader(archive.GetEntry("word/_rels/document.xml.rels").Open()).ReadToEnd();
+
+                Assert.Contains("原始", documentXml);
+                Assert.Contains("缩放", documentXml);
+                Assert.Contains("对比度", documentXml);
+                Assert.Equal(3, Regex.Matches(documentXml, "<w:drawing\\b").Count);
+                Assert.Equal(3, Regex.Matches(documentXml, "<a:blip r:embed=").Count);
+                Assert.Single(archive.Entries.Where(entry => entry.FullName.StartsWith("word/media/", StringComparison.OrdinalIgnoreCase)));
+                Assert.Single(Regex.Matches(relsXml, "relationships/image"));
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
+
+        private static int CountNestedTables(IEnumerable<TableModel> tables)
+        {
+            int count = 0;
+
+            foreach (var table in tables)
+            {
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        foreach (var paragraph in cell.Paragraphs)
+                        {
+                            if (paragraph.Type != ParagraphType.NestedTable || paragraph.NestedTable == null)
+                                continue;
+
+                            count++;
+                            count += CountNestedTables(new[] { paragraph.NestedTable });
+                        }
+                    }
+                }
+            }
+
+            return count;
         }
     }
 }

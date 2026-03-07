@@ -664,7 +664,11 @@ public class DocReader : IDisposable
                 Properties = pap != null 
                     ? _fkpParser!.ConvertToParagraphProperties(pap, Document.Styles)
                     : new ParagraphProperties { StyleIndex = 0 },
-                NestingLevel = pap?.InTable == true ? Math.Max(1, pap.Itap) : (pap?.Itap ?? 0),
+                // MS-DOC itap is zero-based for in-table paragraphs: 0 = top-level
+                // table, 1 = nested one level deeper, etc. Convert it to the
+                // one-based levels used by TableReader so nested tables are not
+                // collapsed onto the top-level table.
+                NestingLevel = pap?.InTable == true ? Math.Max(1, pap.Itap + 1) : 0,
                 ListFormatId = pap?.ListFormatId ?? 0,
                 ListLevel = pap?.ListLevel ?? 0
             };
