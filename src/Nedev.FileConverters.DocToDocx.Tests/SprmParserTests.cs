@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using Nedev.FileConverters.DocToDocx.Readers;
+using Nedev.FileConverters.DocToDocx.Utils;
 using Xunit;
 
 namespace Nedev.FileConverters.DocToDocx.Tests;
@@ -121,7 +122,7 @@ public class SprmParserTests
     }
 
     [Fact]
-    public void SampleTextDoc_ScalingRun_ComesFromFkpGrpprlWithoutCharScaleSprm()
+    public void SampleTextDoc_ScalingRun_ComesFromFkpCharScaleSprm()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
@@ -159,17 +160,11 @@ public class SprmParserTests
         Assert.Null(piece);
         Assert.Null(pieceChp);
         Assert.NotNull(directChp);
-        Assert.True(directChp!.IsBold, details.ToString());
-        Assert.True(directChp.IsItalic, details.ToString());
-        Assert.Equal(44, directChp.FontSize);
-        Assert.Equal(7, directChp.HighlightColor);
-        Assert.Equal(0x000000FFu, directChp.RgbColor);
-        Assert.True(directChp.HasRgbColor);
-        Assert.Equal(100, directChp.Scale);
+        Assert.False(directChp!.IsBold, details.ToString());
+        Assert.False(directChp.IsItalic, details.ToString());
+        Assert.Equal(200, directChp.Scale);
         Assert.DoesNotContain("52 48", pieceGrpprlHex, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(fkpDetails, line => line.Contains("52 48", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(fkpDetails, line => line.Contains("43 4A", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(fkpDetails, line => line.Contains("70 68", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(fkpDetails, line => line.Contains("52 48 C8 00", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -216,6 +211,57 @@ public class SprmParserTests
 
         Assert.NotNull(normalStyle);
         Assert.False(normalStyle!.RunProperties?.IsShadow ?? false);
+    }
+
+    [Fact]
+    public void SampleTextDoc_PapMap_CapturesAlignmentAndIndentMetadata()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+
+        using var docReader = new DocReader(inputPath);
+        docReader.Load();
+
+        var textReader = (Nedev.FileConverters.DocToDocx.Readers.TextReader)GetPrivateField(docReader, "_textReader")!;
+        var papMap = (Dictionary<int, PapBase>)GetPrivateField(docReader, "_globalPapMap")!;
+        var fib = (FibReader)GetPrivateField(docReader, "_fibReader")!;
+        var tableReader = (BinaryReader)GetPrivateField(docReader, "_tableReader")!;
+        var wordDocReader = (BinaryReader)GetPrivateField(docReader, "_wordDocReader")!;
+        var fkpParser = GetPrivateField(docReader, "_fkpParser")!;
+        var papCache = (IDictionary)GetPrivateField(fkpParser, "_papFkpCache")!;
+        var pieceModifiers = (Dictionary<ushort, byte[]>)GetPrivateField(textReader, "_piecePropertyModifiers")!;
+
+        var centeredCp = textReader.Text.IndexOf("居中", StringComparison.Ordinal);
+        var rightCp = textReader.Text.IndexOf("右对齐", StringComparison.Ordinal);
+        var indentCp = textReader.Text.IndexOf("Indent", StringComparison.Ordinal);
+
+        Assert.True(centeredCp >= 0 && rightCp >= 0 && indentCp >= 0, "Failed to locate expected sample markers in reconstructed text.");
+
+        var centeredPap = ResolvePapAtCp(papMap, centeredCp, 4096);
+        var rightPap = ResolvePapAtCp(papMap, rightCp, 4096);
+        var indentPap = ResolvePapAtCp(papMap, indentCp, 4096);
+
+        var report = new StringBuilder();
+        report.AppendLine($"fComplex={fib.FComplex} fcMin=0x{fib.FcMin:X} fcMac=0x{fib.FcMac:X} pieceCount={textReader.Pieces.Count}");
+        report.AppendLine($"fcPlcfBtePapx=0x{fib.FcPlcfBtePapx:X} lcbPlcfBtePapx=0x{fib.LcbPlcfBtePapx:X}");
+        report.AppendLine($"fcPlcfBteChpx=0x{fib.FcPlcfBteChpx:X} lcbPlcfBteChpx=0x{fib.LcbPlcfBteChpx:X}");
+        report.AppendLine($"papBte={DescribeBtePages(tableReader, wordDocReader, fib.FcPlcfBtePapx, fib.LcbPlcfBtePapx)}");
+        report.AppendLine($"papFkpCache={DescribePapCache(papCache)}");
+        report.AppendLine($"centerPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, centeredCp)}");
+        report.AppendLine($"rightPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, rightCp)}");
+        report.AppendLine($"indentPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, indentCp)}");
+        report.AppendLine($"papCount={papMap.Count}");
+        report.AppendLine($"papKeysAroundCenter={string.Join(",", papMap.Keys.Where(key => Math.Abs(key - centeredCp) <= 8192).OrderBy(key => key).Take(20))}");
+        report.AppendLine($"centeredCp={centeredCp} pap={FormatPap(centeredPap)}");
+        report.AppendLine($"rightCp={rightCp} pap={FormatPap(rightPap)}");
+        report.AppendLine($"indentCp={indentCp} pap={FormatPap(indentPap)}");
+
+        Assert.True(centeredPap != null, report.ToString());
+        Assert.True(centeredPap!.Justification == 1, report.ToString());
+        Assert.True(rightPap != null, report.ToString());
+        Assert.True(rightPap!.Justification == 2, report.ToString());
+        Assert.True(indentPap != null, report.ToString());
+        Assert.True(indentPap!.IndentLeft > 0, report.ToString());
     }
 
     private static void ApplySprm(SprmParser parser, Type sprmType, MethodInfo applyMethod, ChpBase chp, ushort code, uint operand)
@@ -310,5 +356,115 @@ public class SprmParserTests
         var safeStart = Math.Max(0, Math.Min(start, text.Length - 1));
         var safeLength = Math.Min(length, text.Length - safeStart);
         return text.Substring(safeStart, safeLength).Replace("\r", "\\r").Replace("\n", "\\n");
+    }
+
+    private static PapBase? ResolvePapAtCp(Dictionary<int, PapBase> papMap, int cp, int maxLookback)
+    {
+        if (papMap.TryGetValue(cp, out var pap))
+            return pap;
+
+        for (var probe = cp - 1; probe >= Math.Max(0, cp - maxLookback); probe--)
+        {
+            if (papMap.TryGetValue(probe, out pap))
+                return pap;
+        }
+
+        return null;
+    }
+
+    private static string FormatPap(PapBase? pap)
+    {
+        if (pap == null)
+            return "<none>";
+
+        return $"just={pap.Justification} istd={pap.Istd} style={pap.StyleId} left={pap.IndentLeft} first={pap.IndentFirstLine} right={pap.IndentRight} before={pap.SpaceBefore} after={pap.SpaceAfter} line={pap.LineSpacing} mult={pap.LineSpacingMultiple} list={pap.ListFormatId}/{pap.ListLevel}";
+    }
+
+    private static string DescribeBtePages(BinaryReader tableReader, BinaryReader wordDocReader, uint fc, uint lcb)
+    {
+        if (fc == 0 || lcb < 12)
+            return "<none>";
+
+        var originalTablePosition = tableReader.BaseStream.Position;
+        var originalWordPosition = wordDocReader.BaseStream.Position;
+
+        try
+        {
+            tableReader.BaseStream.Seek(fc, SeekOrigin.Begin);
+            var entryCount = (int)((lcb - 4) / 8);
+            var cps = new int[entryCount + 1];
+            for (var index = 0; index <= entryCount; index++)
+                cps[index] = tableReader.ReadInt32();
+
+            var descriptions = new List<string>();
+            for (var index = 0; index < entryCount; index++)
+            {
+                var pn = tableReader.ReadUInt32();
+                var offset = pn * WordConsts.FKP_PAGE_SIZE;
+                byte crun = 0;
+                if (offset + WordConsts.FKP_PAGE_SIZE <= wordDocReader.BaseStream.Length)
+                {
+                    wordDocReader.BaseStream.Seek(offset + WordConsts.FKP_PAGE_SIZE - 1, SeekOrigin.Begin);
+                    crun = wordDocReader.ReadByte();
+                }
+
+                descriptions.Add($"{index}:cp={cps[index]}..{cps[index + 1]} pn={pn} crun={crun}");
+            }
+
+            return string.Join(" | ", descriptions);
+        }
+        finally
+        {
+            tableReader.BaseStream.Seek(originalTablePosition, SeekOrigin.Begin);
+            wordDocReader.BaseStream.Seek(originalWordPosition, SeekOrigin.Begin);
+        }
+    }
+
+    private static string DescribePapCache(IDictionary papCache)
+    {
+        var descriptions = new List<string>();
+
+        foreach (DictionaryEntry entry in papCache)
+        {
+            var fkp = entry.Value;
+            var entriesProp = fkp!.GetType().GetProperty("Entries")!;
+            var entries = ((IEnumerable)entriesProp.GetValue(fkp)!).Cast<object>().ToList();
+            var ranges = entries
+                .Take(4)
+                .Select(item => $"{item.GetType().GetProperty("StartCpOffset")!.GetValue(item)}..{item.GetType().GetProperty("EndCpOffset")!.GetValue(item)}")
+                .ToList();
+
+            descriptions.Add($"pn={entry.Key} count={entries.Count} ranges=[{string.Join(",", ranges)}]");
+        }
+
+        return descriptions.Count == 0 ? "<empty>" : string.Join(" | ", descriptions);
+    }
+
+    private static string DescribePiecePap(Nedev.FileConverters.DocToDocx.Readers.TextReader textReader, Dictionary<ushort, byte[]> pieceModifiers, BinaryReader wordDocReader, int cp)
+    {
+        var piece = textReader.Pieces.FirstOrDefault(candidate => cp >= candidate.CpStart && cp < candidate.CpEnd);
+        if (piece == null)
+            return "<no piece>";
+
+        var candidateKeys = new[]
+        {
+            piece.Prm,
+            (ushort)(piece.Prm & 0xFFFE),
+            (ushort)(piece.Prm >> 1),
+            (ushort)(piece.Prm & 0x7FFF),
+            (ushort)((piece.Prm & 0x7FFF) >> 1)
+        };
+
+        foreach (var key in candidateKeys)
+        {
+            if (!pieceModifiers.TryGetValue(key, out var grpprl))
+                continue;
+
+            var pap = new PapBase();
+            new SprmParser(wordDocReader, 0).ApplyToPap(grpprl, pap);
+            return $"piece={FormatPiece(piece)} key=0x{key:X4} grpprl={BitConverter.ToString(grpprl).Replace('-', ' ')} pap={FormatPap(pap)}";
+        }
+
+        return $"piece={FormatPiece(piece)} no-grpprl";
     }
 }

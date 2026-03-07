@@ -8,6 +8,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.IO.Compression;
+using System.Threading.Tasks;
 using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Writers;
 using Nedev.FileConverters.DocToDocx.Utils;
@@ -917,6 +918,8 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
                 var stylesXml = new StreamReader(archive.GetEntry("word/styles.xml").Open()).ReadToEnd();
                 var visibleText = Regex.Replace(documentXml, "<[^>]+>", string.Empty);
+                var xDocument = XDocument.Parse(documentXml);
+                XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
                 Assert.Contains("粗体斜体下划线中横线颜色背景色字体大小字体上标下标组合", visibleText);
                 Assert.Contains("<w:pStyle", documentXml);
@@ -931,12 +934,83 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 Assert.DoesNotContain("<w:del", documentXml, StringComparison.Ordinal);
                 Assert.DoesNotContain("<w:ins", documentXml, StringComparison.Ordinal);
                 Assert.Contains("styleId=\"Normal\"", stylesXml);
+
+                var centeredParagraph = FindParagraphContainingText(xDocument, w, "居中");
+                Assert.Equal("center", centeredParagraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")?.Value);
+
+                var rightAlignedParagraph = FindParagraphContainingText(xDocument, w, "右对齐");
+                Assert.Equal("right", rightAlignedParagraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")?.Value);
+
+                var indentParagraph = FindParagraphContainingText(xDocument, w, "Indent");
+                Assert.NotNull(indentParagraph.Element(w + "pPr")?.Element(w + "ind"));
+
+                var lineSpacingParagraph = FindParagraphContainingText(xDocument, w, "行间距");
+                Assert.NotNull(lineSpacingParagraph.Element(w + "pPr")?.Element(w + "spacing"));
+
+                var scalingParagraph = FindParagraphContainingText(xDocument, w, "文字Scaling 200%");
+                Assert.Equal("200", scalingParagraph
+                    .Descendants(w + "rPr")
+                    .Elements(w + "w")
+                    .Attributes(w + "val")
+                    .Select(attribute => attribute.Value)
+                    .FirstOrDefault());
+
+                Assert.True(xDocument.Descendants(w + "numPr").Any(), "Expected numbered or bulleted list output for the sample indent section.");
             }
             finally
             {
                 if (File.Exists(outputPath))
                     File.Delete(outputPath);
             }
+        }
+
+        [Fact]
+        public void SampleTextDoc_LoadDocument_PreservesParagraphLayoutProperties()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+
+            var document = DocToDocxConverter.LoadDocument(inputPath);
+
+            var centeredParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("居中", StringComparison.Ordinal));
+            Assert.NotNull(centeredParagraph);
+            Assert.Equal(ParagraphAlignment.Center, centeredParagraph!.Properties?.Alignment);
+
+            var rightAlignedParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("右对齐", StringComparison.Ordinal));
+            Assert.NotNull(rightAlignedParagraph);
+            Assert.Equal(ParagraphAlignment.Right, rightAlignedParagraph!.Properties?.Alignment);
+
+            var indentParagraph = document.Paragraphs.FirstOrDefault(p => string.Equals(p.Text, "Indent", StringComparison.Ordinal));
+            Assert.NotNull(indentParagraph);
+            Assert.True(indentParagraph!.Properties?.IndentLeft > 0, "Expected sample indent paragraph to retain a positive left indent.");
+
+            var lineSpacingParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("行间距", StringComparison.Ordinal));
+            Assert.NotNull(lineSpacingParagraph);
+            Assert.True(
+                (lineSpacingParagraph!.Properties?.LineSpacing ?? 240) != 240 ||
+                (lineSpacingParagraph.Properties?.LineSpacingMultiple ?? 1) != 1,
+                "Expected sample line-spacing paragraph to keep a non-default line spacing setting.");
+
+            var listParagraphs = document.Paragraphs
+                .Where(p => p.Text.Length == 1 && p.Text[0] is 'A' or 'B' or 'C' or 'D')
+                .Take(4)
+                .ToList();
+
+            Assert.Equal(4, listParagraphs.Count);
+            Assert.All(listParagraphs, paragraph => Assert.True(paragraph.ListFormatId > 0, $"Expected list paragraph '{paragraph.Text}' to retain numbering metadata."));
+            Assert.Contains(listParagraphs, paragraph => paragraph.ListLevel > 0);
+        }
+
+        [Fact]
+        [Fact]
+        public void SampleTableDoc_Conversion_DoesNotHang()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "table.doc");
+
+            var loadTask = Task.Run(() => DocToDocxConverter.LoadDocument(inputPath));
+            Assert.True(loadTask.Wait(TimeSpan.FromSeconds(5)), "Loading sample table.doc took too long (possible hang)");
+            Assert.NotNull(loadTask.Result);
         }
 
         [Fact]
@@ -1029,6 +1103,13 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             }
 
             return count;
+        }
+
+        private static XElement FindParagraphContainingText(XDocument document, XNamespace w, string text)
+        {
+            return document
+                .Descendants(w + "p")
+                .First(paragraph => string.Concat(paragraph.Descendants(w + "t").Select(t => t.Value)).Contains(text, StringComparison.Ordinal));
         }
     }
 }

@@ -52,21 +52,28 @@ public class FkpParser
         
         // Read CP array: numPcd + 1 entries
         var cpArray = new int[numPcd + 1];
+        int cpRead = 0;
         for (int i = 0; i <= numPcd; i++) 
         {
             if (_tableReader.BaseStream.Position + 4 > _tableReader.BaseStream.Length) break;
             cpArray[i] = _tableReader.ReadInt32();
+            cpRead++;
         }
         
         // Read PCD array: numPcd entries (PNs)
         var pnArray = new uint[numPcd];
+        int pnRead = 0;
         for (int i = 0; i < numPcd; i++) 
         {
             if (_tableReader.BaseStream.Position + 4 > _tableReader.BaseStream.Length) break;
             pnArray[i] = _tableReader.ReadUInt32();
+            pnRead++;
         }
         
-        for (int i = 0; i < numPcd; i++)
+        // only iterate over entries we actually read; avoids huge loops when
+        // header length was corrupted
+        var loopCount = Math.Min(cpRead - 1, pnRead);
+        for (int i = 0; i < loopCount; i++)
         {
             var fkp = GetChpFkp(pnArray[i]);
             if (fkp == null) continue;
@@ -137,19 +144,26 @@ public class FkpParser
             if (rgbBase + i >= data.Length) break;
             
             var propOffset = data[rgbBase + i];
-            if (propOffset == 0) continue;
-
-            // propOffset is a word offset (multiply by 2 to get byte offset)
             var dataOffset = propOffset * 2;
-            if (dataOffset >= WordConsts.FKP_PAGE_SIZE || dataOffset >= data.Length) continue;
-
-            var cb = data[dataOffset];
-            if (cb == 0 || dataOffset + 1 + cb > data.Length) continue;
+            var cb = 0;
             
             var chp = new ChpBase();
-            var grpprl = new byte[cb];
-            Array.Copy(data, dataOffset + 1, grpprl, 0, cb);
-            _sprmParser.ApplyToChp(grpprl, chp);
+            var grpprl = Array.Empty<byte>();
+
+            if (propOffset != 0)
+            {
+                // propOffset is a word offset (multiply by 2 to get byte offset)
+                if (dataOffset < WordConsts.FKP_PAGE_SIZE && dataOffset < data.Length)
+                {
+                    cb = data[dataOffset];
+                    if (cb > 0 && dataOffset + 1 + cb <= data.Length)
+                    {
+                        grpprl = new byte[cb];
+                        Array.Copy(data, dataOffset + 1, grpprl, 0, cb);
+                        _sprmParser.ApplyToChp(grpprl, chp);
+                    }
+                }
+            }
 
             var startFc = fcArray[i];
             var endFc = fcArray[i + 1];
@@ -190,21 +204,26 @@ public class FkpParser
         
         // Read CP array: numPcd + 1 entries
         var cpArray = new int[numPcd + 1];
+        int cpRead = 0;
         for (int i = 0; i <= numPcd; i++) 
         {
             if (_tableReader.BaseStream.Position + 4 > _tableReader.BaseStream.Length) break;
             cpArray[i] = _tableReader.ReadInt32();
+            cpRead++;
         }
         
         // Read PCD array: numPcd entries (PNs)
         var pnArray = new uint[numPcd];
+        int pnRead = 0;
         for (int i = 0; i < numPcd; i++) 
         {
             if (_tableReader.BaseStream.Position + 4 > _tableReader.BaseStream.Length) break;
             pnArray[i] = _tableReader.ReadUInt32();
+            pnRead++;
         }
         
-        for (int i = 0; i < numPcd; i++)
+        var loopCount = Math.Min(cpRead - 1, pnRead);
+        for (int i = 0; i < loopCount; i++)
         {
             var fkp = GetPapFkp(pnArray[i]);
             if (fkp == null) continue;
@@ -285,41 +304,53 @@ public class FkpParser
             var bxOffset = bxBase + i * bxSize;
             if (bxOffset >= data.Length) break;
             
-            var bx = data[bxOffset]; // First byte of BX is the word offset
-            if (bx == 0) continue;
-
-            var dataOffset = bx * 2;
-            if (dataOffset >= WordConsts.FKP_PAGE_SIZE || dataOffset >= data.Length) continue;
-
-            if (dataOffset + 1 > data.Length) continue;
-            // cb2 is stored as a count of words (including the istd)
-            var cb2 = data[dataOffset];
-            var cb = cb2 * 2; // Convert word count to byte count
-            if (cb == 0) continue;
-
             var props = new PapBase();
-            if (cb >= 2 && dataOffset + 1 + cb <= data.Length)
+            var bx = data[bxOffset]; // First byte of BX is the word offset
+            var dataOffset = bx * 2;
+            if (dataOffset < WordConsts.FKP_PAGE_SIZE && dataOffset < data.Length)
             {
-                props.Istd = BitConverter.ToUInt16(data, dataOffset + 1);
-                var grpprlLength = cb - 2;
-                if (grpprlLength > 0 && dataOffset + 3 + grpprlLength <= data.Length)
+                // PAPX size is stored as a word count. Word stores either
+                // (cb * 2) - 1 bytes directly or, for aligned edge cases, a
+                // zero byte followed by the true word count.
+                var cb = data[dataOffset] * 2;
+                if (cb == 0 && dataOffset + 1 < data.Length)
                 {
-                    var grpprl = new byte[grpprlLength];
-                    Array.Copy(data, dataOffset + 3, grpprl, 0, grpprlLength);
-                    // Decode paragraph and table (TAP) properties from the same GRPPRL.
-                    _sprmParser.ApplyToPap(grpprl, props);
-                    var tap = new TapBase();
-                    _sprmParser.ApplyToTap(grpprl, tap);
-                    props.Tap = tap;
+                    dataOffset++;
+                    cb = data[dataOffset] * 2;
+                }
+                else if (cb > 0)
+                {
+                    cb--;
+                }
+
+                if (cb >= 2 && dataOffset + 1 + cb <= data.Length)
+                {
+                    props.Istd = BitConverter.ToUInt16(data, dataOffset + 1);
+                    var grpprlLength = cb - 2;
+                    if (grpprlLength > 0 && dataOffset + 3 + grpprlLength <= data.Length)
+                    {
+                        var grpprl = new byte[grpprlLength];
+                        Array.Copy(data, dataOffset + 3, grpprl, 0, grpprlLength);
+                        // Decode paragraph and table (TAP) properties from the same GRPPRL.
+                        _sprmParser.ApplyToPap(grpprl, props);
+                        var tap = new TapBase();
+                        _sprmParser.ApplyToTap(grpprl, tap);
+                        props.Tap = tap;
+                    }
                 }
             }
 
             if (i + 1 < fcArray.Length)
             {
+                var startFc = fcArray[i];
+                var endFc = fcArray[i + 1];
+                var cpStart = FcToCp(startFc);
+                var cpEnd = FcToCp(endFc);
+
                 fkp.Entries.Add(new PapFkpEntry
                 {
-                    StartCpOffset = fcArray[i],
-                    EndCpOffset = fcArray[i + 1],
+                    StartCpOffset = cpStart,
+                    EndCpOffset = cpEnd,
                     Properties = props
                 });
             }
@@ -335,19 +366,15 @@ public class FkpParser
     {
         if (_textReader == null || _textReader.Pieces.Count == 0)
         {
-            // Fallback for simple documents (no Piece Table)
-            // In a simple document, text starts at _fib.FcMin.
-            // CPs are logical character indices starting from 0.
+            // Fallback for simple documents (no Piece Table). These can still
+            // use double-byte encodings such as GBK, so FC is not necessarily a
+            // one-to-one match with decoded character positions.
             if (fc < _fib.FcMin) return 0;
-            
-            // For simple documents, how do we know if it's 1-byte or 2-byte?
-            // Windows-1252/ANSI is 1-byte. For Word 97+, text can be Unicode (2-byte) but there's a flag.
-            // Simplified fallback: if it's very large, maybe it's 2-byte, but by default 
-            // CP is directly FC offset for ANSI, or FC/2 for Unicode. 
-            // Since ReadSimpleText already read it, let's just subtract FcMin.
-            // Actually, for Word 97+, non-complex files can only be 1 byte/char if fComplex is false in some cases? 
-            // The standard way: we can just assume 1 byte/char because if it's Unicode it would likely use a Piece Table.
-            return (int)(fc - _fib.FcMin); 
+
+            if (_textReader != null)
+                return _textReader.MapSimpleFcToCp(fc);
+
+            return (int)(fc - _fib.FcMin);
         }
 
         foreach (var piece in _textReader.Pieces)

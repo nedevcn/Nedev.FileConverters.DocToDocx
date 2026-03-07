@@ -20,6 +20,8 @@ public class TextReader
     private string _text = string.Empty;
     private List<Piece> _pieces = new();
     private readonly Dictionary<ushort, byte[]> _piecePropertyModifiers = new();
+    private int[]? _simpleByteToCpMap;
+    private int _simpleTextOffset;
 
     /// <param name="wordDocReader">Reader for the WordDocument stream</param>
     /// <param name="tableReader">Reader for the Table stream (0Table or 1Table)</param>
@@ -45,6 +47,27 @@ public class TextReader
     /// Gets the piece table entries.
     /// </summary>
     public IReadOnlyList<Piece> Pieces => _pieces;
+
+    /// <summary>
+    /// Maps a file-character offset to a character position for simple documents
+    /// that do not use a piece table.
+    /// </summary>
+    public int MapSimpleFcToCp(int fc)
+    {
+        EnsureSimpleByteToCpMap();
+
+        if (_simpleByteToCpMap == null || _simpleByteToCpMap.Length == 0)
+            return Math.Max(0, fc - _simpleTextOffset);
+
+        var byteOffset = fc - _simpleTextOffset;
+        if (byteOffset <= 0)
+            return 0;
+
+        if (byteOffset >= _simpleByteToCpMap.Length)
+            return _simpleByteToCpMap[^1];
+
+        return _simpleByteToCpMap[byteOffset];
+    }
 
     /// <summary>
     /// Gets any CLX PRC/PRM-based character properties for the piece containing the supplied CP.
@@ -658,6 +681,107 @@ public class TextReader
             RawFcMasked = (uint)textOffset
         };
         return DecodeCompressedPieceWithLid(fake, cpCount, _fib.Lid);
+    }
+
+    private void EnsureSimpleByteToCpMap()
+    {
+        if (_simpleByteToCpMap != null || _pieces.Count > 0)
+            return;
+
+        _simpleTextOffset = _fib.FcMin > 0 ? (int)_fib.FcMin : 0x200;
+        var availableBytes = (int)Math.Max(0, _wordDocReader.BaseStream.Length - _simpleTextOffset);
+        if (availableBytes == 0)
+        {
+            _simpleByteToCpMap = Array.Empty<int>();
+            return;
+        }
+
+        var bytesToRead = Math.Min(availableBytes, Math.Max(_text.Length * 4, _fib.CcpText * 4));
+        if (bytesToRead == 0)
+        {
+            _simpleByteToCpMap = Array.Empty<int>();
+            return;
+        }
+
+        _wordDocReader.BaseStream.Seek(_simpleTextOffset, SeekOrigin.Begin);
+        var rawBytes = _wordDocReader.ReadBytes(bytesToRead);
+        if (rawBytes.Length == 0)
+        {
+            _simpleByteToCpMap = Array.Empty<int>();
+            return;
+        }
+
+        var candidateMaps = new List<(int score, int[] map)>();
+
+        void AddAnsiCandidate(Encoding encoding)
+        {
+            try
+            {
+                var decoded = encoding.GetString(rawBytes);
+                var score = ScoreDecodedPrefix(decoded);
+                candidateMaps.Add((score, BuildAnsiByteToCpMap(rawBytes, encoding)));
+            }
+            catch
+            {
+            }
+        }
+
+        if (rawBytes.Length >= 2)
+        {
+            var unicodeBytes = rawBytes.Length & ~1;
+            var unicodeDecoded = Encoding.Unicode.GetString(rawBytes, 0, unicodeBytes);
+            candidateMaps.Add((ScoreDecodedPrefix(unicodeDecoded), BuildUnicodeByteToCpMap(unicodeBytes)));
+        }
+
+        AddAnsiCandidate(GetEncodingForCompressedText(_fib.Lid));
+        foreach (var encoding in GetExtraEncodingsForCompressed(_fib.Lid))
+            AddAnsiCandidate(encoding);
+
+        _simpleByteToCpMap = candidateMaps
+            .OrderByDescending(candidate => candidate.score)
+            .Select(candidate => candidate.map)
+            .FirstOrDefault() ?? Array.Empty<int>();
+    }
+
+    private int ScoreDecodedPrefix(string decoded)
+    {
+        if (string.IsNullOrEmpty(decoded))
+            return int.MinValue;
+
+        var compareLength = Math.Min(decoded.Length, _text.Length);
+        var matchingPrefix = 0;
+        while (matchingPrefix < compareLength && decoded[matchingPrefix] == _text[matchingPrefix])
+            matchingPrefix++;
+
+        return matchingPrefix * 1000 + DecodeQuality(decoded);
+    }
+
+    private static int[] BuildUnicodeByteToCpMap(int byteCount)
+    {
+        var map = new int[byteCount + 1];
+        for (var index = 0; index <= byteCount; index++)
+            map[index] = index / 2;
+
+        return map;
+    }
+
+    private static int[] BuildAnsiByteToCpMap(byte[] bytes, Encoding encoding)
+    {
+        var map = new int[bytes.Length + 1];
+        var decoder = encoding.GetDecoder();
+        var singleByte = new byte[1];
+        var charBuffer = new char[2];
+        var charCount = 0;
+
+        for (var index = 0; index < bytes.Length; index++)
+        {
+            singleByte[0] = bytes[index];
+            decoder.Convert(singleByte, 0, 1, charBuffer, 0, charBuffer.Length, flush: false, out _, out var charsUsed, out _);
+            charCount += charsUsed;
+            map[index + 1] = charCount;
+        }
+
+        return map;
     }
 }
 
