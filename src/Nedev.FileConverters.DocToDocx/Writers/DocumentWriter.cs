@@ -710,7 +710,7 @@ public partial class DocumentWriter
     private static bool ParagraphHasVisibleContent(ParagraphModel paragraph)
     {
         return paragraph.Runs != null && paragraph.Runs.Any(r =>
-            (!string.IsNullOrEmpty(r.Text) && !string.IsNullOrWhiteSpace(r.Text)) || r.IsPicture || r.IsField);
+            (!string.IsNullOrEmpty(r.Text) && !string.IsNullOrWhiteSpace(r.Text)) || r.IsPicture || r.IsField || r.IsBookmark);
     }
 
     /// <summary>
@@ -1129,6 +1129,18 @@ public partial class DocumentWriter
         
         if (!hasText && !hasVisualContent)
         {
+            if (run.IsBookmark)
+            {
+                if (run.IsBookmarkStart)
+                {
+                    WriteBookmarkStart(run.BookmarkName);
+                }
+                else
+                {
+                    WriteBookmarkEnd(run.BookmarkName);
+                }
+            }
+
             // Even if no text, if there are properties, we might want to write them
             // But for now, skip empty runs to avoid corruption
             return;
@@ -1939,7 +1951,7 @@ public partial class DocumentWriter
 
     private static bool HasRenderableContent(RunModel run)
     {
-        if (run.IsPicture || run.IsField)
+        if (run.IsPicture || run.IsField || run.IsBookmark)
             return true;
 
         return !string.IsNullOrWhiteSpace(StripInlineHyperlinkFieldArtifacts(run.Text ?? string.Empty));

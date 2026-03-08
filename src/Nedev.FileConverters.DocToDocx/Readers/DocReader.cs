@@ -46,6 +46,7 @@ public class DocReader : IDisposable
     private TextboxReader? _textboxReader;
     private HeaderFooterReader? _headerFooterReader;
     private ListReader? _listReader;
+    private BookmarkReader? _bookmarkReader;
     private FieldReader? _fieldReader;
     private HyperlinkReader? _hyperlinkReader;
     private OfficeArtReader? _officeArtReader;
@@ -241,6 +242,7 @@ public class DocReader : IDisposable
         _textboxReader = new TextboxReader(_tableReader!, _fibReader!, _textReader!, _fkpParser);
         _headerFooterReader = new HeaderFooterReader(_tableReader!, _wordDocReader!, _fibReader!, _textReader!);
         _listReader = new ListReader(_tableReader!, _fibReader!);
+        _bookmarkReader = new BookmarkReader(_tableReader!, _wordDocReader!, _fibReader!);
         _fieldReader = new FieldReader();
         _hyperlinkReader = new HyperlinkReader();
         _sectionReader = new SectionReader(_tableReader!, _wordDocReader!, _fibReader!);
@@ -317,6 +319,12 @@ public class DocReader : IDisposable
         _globalChpMap = _fkpParser!.ReadChpProperties();
         _globalPapMap = _fkpParser.ReadPapProperties();
         _textReader.SetTextFromPieces(totalCp, _globalChpMap);
+
+        if (_bookmarkReader != null)
+        {
+            _bookmarkReader.Read();
+            Document.Bookmarks = _bookmarkReader.Bookmarks.ToList();
+        }
 
         // Step 4: Parse paragraphs and runs
         int mainDocLength = Math.Min(_textReader.Text.Length, _fibReader.CcpText);
@@ -712,6 +720,7 @@ public class DocReader : IDisposable
                 }
             }
 
+            paragraph.Runs = ApplyBookmarkMarkers(paragraph.Runs, paraStartCp, paraStartCp + paraText.Length);
             ApplyParagraphStyleDefaults(paragraph);
             ApplyTemplateSpecificFixes(paragraph);
 
@@ -719,6 +728,147 @@ public class DocReader : IDisposable
         }
         
         return paragraphs;
+    }
+
+    private List<RunModel> ApplyBookmarkMarkers(List<RunModel> runs, int paragraphStartCp, int paragraphEndCp)
+    {
+        if (runs.Count == 0 || Document.Bookmarks.Count == 0)
+            return runs;
+
+        var markerPositions = Document.Bookmarks
+            .SelectMany(bookmark => new[] { bookmark.StartCp, bookmark.EndCp })
+            .Where(cp => cp > paragraphStartCp && cp < paragraphEndCp)
+            .Distinct()
+            .OrderBy(cp => cp)
+            .ToList();
+
+        var splitRuns = SplitRunsAtBookmarkBoundaries(runs, markerPositions);
+        var withMarkers = new List<RunModel>(splitRuns.Count + Document.Bookmarks.Count * 2);
+
+        foreach (var run in splitRuns)
+        {
+            foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.StartCp == run.CharacterPosition))
+            {
+                withMarkers.Add(CreateBookmarkRun(bookmark, isStart: true));
+            }
+
+            foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.EndCp == run.CharacterPosition))
+            {
+                withMarkers.Add(CreateBookmarkRun(bookmark, isStart: false));
+            }
+
+            withMarkers.Add(run);
+        }
+
+        foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.StartCp == paragraphEndCp))
+        {
+            withMarkers.Add(CreateBookmarkRun(bookmark, isStart: true));
+        }
+
+        foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.EndCp == paragraphEndCp))
+        {
+            withMarkers.Add(CreateBookmarkRun(bookmark, isStart: false));
+        }
+
+        return withMarkers;
+    }
+
+    private static List<RunModel> SplitRunsAtBookmarkBoundaries(List<RunModel> runs, List<int> boundaries)
+    {
+        if (boundaries.Count == 0)
+            return runs;
+
+        var splitRuns = new List<RunModel>(runs.Count);
+
+        foreach (var run in runs)
+        {
+            if (!CanSplitRunAtBookmarkBoundary(run))
+            {
+                splitRuns.Add(run);
+                continue;
+            }
+
+            int segmentStart = run.CharacterPosition;
+            int segmentTextOffset = 0;
+            int runEnd = run.CharacterPosition + run.CharacterLength;
+            var runBoundaries = boundaries.Where(cp => cp > run.CharacterPosition && cp < runEnd).ToList();
+
+            if (runBoundaries.Count == 0)
+            {
+                splitRuns.Add(run);
+                continue;
+            }
+
+            foreach (var boundary in runBoundaries)
+            {
+                int segmentLength = boundary - segmentStart;
+                if (segmentLength > 0)
+                {
+                    splitRuns.Add(CloneRunSegment(run, run.Text.Substring(segmentTextOffset, segmentLength), segmentStart, segmentLength));
+                }
+
+                segmentStart = boundary;
+                segmentTextOffset += segmentLength;
+            }
+
+            int trailingLength = runEnd - segmentStart;
+            if (trailingLength > 0)
+            {
+                splitRuns.Add(CloneRunSegment(run, run.Text.Substring(segmentTextOffset, trailingLength), segmentStart, trailingLength));
+            }
+        }
+
+        return splitRuns;
+    }
+
+    private static bool CanSplitRunAtBookmarkBoundary(RunModel run)
+    {
+        return !run.IsPicture &&
+               !run.IsField &&
+               !run.IsOle &&
+               run.CharacterLength > 0 &&
+               run.Text.Length == run.CharacterLength;
+    }
+
+    private static RunModel CloneRunSegment(RunModel run, string text, int characterPosition, int characterLength)
+    {
+        return new RunModel
+        {
+            Text = text,
+            Properties = run.Properties,
+            IsField = run.IsField,
+            FieldCode = run.FieldCode,
+            CharacterPosition = characterPosition,
+            CharacterLength = characterLength,
+            IsPicture = run.IsPicture,
+            ImageIndex = run.ImageIndex,
+            FcPic = run.FcPic,
+            ImageRelationshipId = run.ImageRelationshipId,
+            IsOle = run.IsOle,
+            OleObjectId = run.OleObjectId,
+            OleProgId = run.OleProgId,
+            IsHyperlink = run.IsHyperlink,
+            HyperlinkUrl = run.HyperlinkUrl,
+            HyperlinkBookmark = run.HyperlinkBookmark,
+            HyperlinkRelationshipId = run.HyperlinkRelationshipId,
+            CropTop = run.CropTop,
+            CropBottom = run.CropBottom,
+            CropLeft = run.CropLeft,
+            CropRight = run.CropRight
+        };
+    }
+
+    private static RunModel CreateBookmarkRun(BookmarkModel bookmark, bool isStart)
+    {
+        return new RunModel
+        {
+            Text = string.Empty,
+            CharacterPosition = isStart ? bookmark.StartCp : bookmark.EndCp,
+            CharacterLength = 0,
+            IsBookmark = true,
+            IsBookmarkStart = isStart,
+            BookmarkName = bookmark.Name
+        };
     }
 
     /// <summary>
@@ -764,10 +914,9 @@ public class DocReader : IDisposable
                 }
             }
 
-            // Isolate special characters into their own runs of length 1 to prevent data loss or index smearing
-            // We isolate \x01 (inline picture) and \x08 (floating picture) because they map to complex objects.
-            bool isSpecialChar = i < paraText.Length && (paraText[i] == '\x01' || paraText[i] == '\x08');
-            bool previousWasSpecial = i > 0 && (paraText[i - 1] == '\x01' || paraText[i - 1] == '\x08');
+            // Isolate control markers so field instructions/results and object anchors do not smear into one visible run.
+            bool isSpecialChar = i < paraText.Length && (paraText[i] == '\x01' || paraText[i] == '\x08' || paraText[i] == '\x13' || paraText[i] == '\x14' || paraText[i] == '\x15');
+            bool previousWasSpecial = i > 0 && (paraText[i - 1] == '\x01' || paraText[i - 1] == '\x08' || paraText[i - 1] == '\x13' || paraText[i - 1] == '\x14' || paraText[i - 1] == '\x15');
             
             bool chpChanged = i == paraText.Length || !ChpEquals(currentChp, chpAtCp) || isSpecialChar || previousWasSpecial;
 
@@ -781,6 +930,7 @@ public class DocReader : IDisposable
                 if (!string.IsNullOrEmpty(cleanText) || isPicture || runText.Contains('\x13') || runText.Contains('\x14') || runText.Contains('\x15'))
                 {
                     var runProps = GetEffectiveRunPropertiesAtCp(papMap, paraStartCp + runStart, currentChp);
+                    bool wasCollectingFieldCode = collectingFieldCode;
 
                     var run = new RunModel
                     {
@@ -793,6 +943,11 @@ public class DocReader : IDisposable
                     run.FcPic = currentChp?.FcPic ?? 0;
 
                     var completedFieldCode = TryAdvanceFieldState(runText, activeFieldCode, ref collectingFieldCode, ref insideFieldResult);
+                    if ((wasCollectingFieldCode || runText.Contains(FieldReader.FieldStartChar)) && !insideFieldResult)
+                    {
+                        run.Text = string.Empty;
+                    }
+
                     if (!string.IsNullOrEmpty(completedFieldCode))
                     {
                         run.IsField = true;

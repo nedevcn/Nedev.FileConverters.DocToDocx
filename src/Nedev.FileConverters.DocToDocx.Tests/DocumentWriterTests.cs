@@ -477,6 +477,32 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void EmptyBookmarkMarkerRuns_AreSerialized()
+        {
+            var doc = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = string.Empty, IsBookmark = true, BookmarkName = "target", IsBookmarkStart = true });
+            para.Runs.Add(new RunModel { Text = "Body" });
+            para.Runs.Add(new RunModel { Text = string.Empty, IsBookmark = true, BookmarkName = "target", IsBookmarkStart = false });
+            doc.Paragraphs.Add(para);
+
+            byte[] pkg;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                pkg = ms.ToArray();
+            }
+
+            var xml = new StreamReader(new ZipArchive(new MemoryStream(pkg), ZipArchiveMode.Read).GetEntry("word/document.xml")!.Open()).ReadToEnd();
+            Assert.Contains("bookmarkStart", xml, StringComparison.Ordinal);
+            Assert.Contains("bookmarkEnd", xml, StringComparison.Ordinal);
+            Assert.Contains("name=\"target\"", xml, StringComparison.Ordinal);
+            Assert.Contains(">Body<", xml, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void SanitizeXmlString_PreservesCjkPunctuation()
         {
             var method = typeof(Nedev.FileConverters.DocToDocx.Writers.DocumentWriter)
