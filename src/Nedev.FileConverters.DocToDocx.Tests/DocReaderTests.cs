@@ -123,6 +123,43 @@ public class DocReaderTests
             run => Assert.Equal("o", run.Text));
     }
 
+    [Fact]
+    public void ApplyBookmarkMarkers_PreservesBookmarkOnlyEmptyParagraph()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+
+        using var docReader = new DocReader(inputPath);
+        docReader.Document.Bookmarks.Add(new BookmarkModel
+        {
+            Name = "emptyMark",
+            StartCp = 10,
+            EndCp = 10
+        });
+
+        var method = typeof(DocReader).GetMethod("ApplyBookmarkMarkers", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var annotatedRuns = (List<RunModel>)method!.Invoke(docReader, new object[] { new List<RunModel>(), 10, 10 })!;
+
+        Assert.Collection(
+            annotatedRuns,
+            run =>
+            {
+                Assert.True(run.IsBookmark);
+                Assert.True(run.IsBookmarkStart);
+                Assert.Equal("emptyMark", run.BookmarkName);
+                Assert.Equal(10, run.CharacterPosition);
+            },
+            run =>
+            {
+                Assert.True(run.IsBookmark);
+                Assert.False(run.IsBookmarkStart);
+                Assert.Equal("emptyMark", run.BookmarkName);
+                Assert.Equal(10, run.CharacterPosition);
+            });
+    }
+
     private static void AddChpRange(Dictionary<int, ChpBase> map, int start, int end, int fontSize)
     {
         var chp = new ChpBase { FontSize = (byte)fontSize };

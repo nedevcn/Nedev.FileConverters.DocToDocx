@@ -732,8 +732,38 @@ public class DocReader : IDisposable
 
     private List<RunModel> ApplyBookmarkMarkers(List<RunModel> runs, int paragraphStartCp, int paragraphEndCp)
     {
-        if (runs.Count == 0 || Document.Bookmarks.Count == 0)
+        if (Document.Bookmarks.Count == 0)
             return runs;
+
+        if (runs.Count == 0)
+        {
+            var markerOnlyRuns = new List<RunModel>();
+
+            foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.StartCp == paragraphStartCp))
+            {
+                markerOnlyRuns.Add(CreateBookmarkRun(bookmark, isStart: true));
+            }
+
+            foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.EndCp == paragraphStartCp))
+            {
+                markerOnlyRuns.Add(CreateBookmarkRun(bookmark, isStart: false));
+            }
+
+            if (paragraphEndCp != paragraphStartCp)
+            {
+                foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.StartCp == paragraphEndCp))
+                {
+                    markerOnlyRuns.Add(CreateBookmarkRun(bookmark, isStart: true));
+                }
+
+                foreach (var bookmark in Document.Bookmarks.Where(bookmark => bookmark.EndCp == paragraphEndCp))
+                {
+                    markerOnlyRuns.Add(CreateBookmarkRun(bookmark, isStart: false));
+                }
+            }
+
+            return markerOnlyRuns;
+        }
 
         var markerPositions = Document.Bookmarks
             .SelectMany(bookmark => new[] { bookmark.StartCp, bookmark.EndCp })
