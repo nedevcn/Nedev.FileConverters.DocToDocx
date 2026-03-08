@@ -209,32 +209,24 @@ public class DocReader : IDisposable
         // Extract footnote/endnote streams (optional)
         if (_cfb.HasStream("Footnote"))
         {
-            _footnoteStream = _fibReader.FEncrypted
-                ? _cfb.GetDecryptedStream("Footnote")
-                : _cfb.GetStream("Footnote");
+            _footnoteStream = OpenOptionalStoryStream("Footnote", isRc4Encrypted, rc4Context);
         }
 
         if (_cfb.HasStream("Endnote"))
         {
-            _endnoteStream = _fibReader.FEncrypted
-                ? _cfb.GetDecryptedStream("Endnote")
-                : _cfb.GetStream("Endnote");
+            _endnoteStream = OpenOptionalStoryStream("Endnote", isRc4Encrypted, rc4Context);
         }
 
         // Extract annotation stream (optional)
         if (_cfb.HasStream("Anot"))
         {
-            _anotStream = _fibReader.FEncrypted
-                ? _cfb.GetDecryptedStream("Anot")
-                : _cfb.GetStream("Anot");
+            _anotStream = OpenOptionalStoryStream("Anot", isRc4Encrypted, rc4Context);
         }
 
         // Extract textbox stream (optional)
         if (_cfb.HasStream("Txbx"))
         {
-            _txbxStream = _fibReader.FEncrypted
-                ? _cfb.GetDecryptedStream("Txbx")
-                : _cfb.GetStream("Txbx");
+            _txbxStream = OpenOptionalStoryStream("Txbx", isRc4Encrypted, rc4Context);
         }
 
         // Initialize sub-readers
@@ -252,6 +244,20 @@ public class DocReader : IDisposable
         _fieldReader = new FieldReader();
         _hyperlinkReader = new HyperlinkReader();
         _sectionReader = new SectionReader(_tableReader!, _wordDocReader!, _fibReader!);
+    }
+
+    private Stream OpenOptionalStoryStream(string streamName, bool isRc4Encrypted, EncryptionHelper.DecryptionContext? rc4Context)
+    {
+        if (!_fibReader!.FEncrypted)
+            return _cfb!.GetStream(streamName);
+
+        if (isRc4Encrypted)
+        {
+            var rawStream = _cfb!.GetStream(streamName);
+            return new Rc4Stream(rawStream, rc4Context!.BaseKey, streamStartOffset: 0, useSha1: rc4Context.UseSha1, leaveOpen: false);
+        }
+
+        return _cfb!.GetDecryptedStream(streamName);
     }
 
     /// <summary>

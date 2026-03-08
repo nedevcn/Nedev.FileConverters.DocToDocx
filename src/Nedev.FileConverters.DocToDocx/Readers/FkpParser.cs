@@ -72,6 +72,7 @@ public class FkpParser
         // only iterate over entries we actually read; avoids huge loops when
         // header length was corrupted
         var loopCount = Math.Min(cpRead - 1, pnRead);
+        var storyCpLimit = GetDocumentCpLimit();
         for (int i = 0; i < loopCount; i++)
         {
             var fkp = GetChpFkp(pnArray[i]);
@@ -84,7 +85,7 @@ public class FkpParser
                 int endCp = entry.EndCpOffset;
                 
                 int finalStart = Math.Max(0, startCp);
-                int finalEnd = Math.Min(_fib.CcpText, endCp);
+                int finalEnd = Math.Min(storyCpLimit, endCp);
                 
                 for (int cp = finalStart; cp < finalEnd; cp++) chpMap[cp] = entry.Properties;
             }
@@ -221,6 +222,7 @@ public class FkpParser
         }
         
         var loopCount = Math.Min(cpRead - 1, pnRead);
+        var storyCpLimit = GetDocumentCpLimit();
         for (int i = 0; i < loopCount; i++)
         {
             var fkp = GetPapFkp(pnArray[i]);
@@ -233,7 +235,7 @@ public class FkpParser
                 int endCp = entry.EndCpOffset;
                 
                 int finalStart = Math.Max(0, startCp);
-                int finalEnd = Math.Min(_fib.CcpText, endCp);
+                int finalEnd = Math.Min(storyCpLimit, endCp);
                 
                 for (int cp = finalStart; cp < finalEnd; cp++) papMap[cp] = entry.Properties;
             }
@@ -446,6 +448,19 @@ public class FkpParser
             }
         }
         return null;
+    }
+
+    private int GetDocumentCpLimit()
+    {
+        long total = (long)_fib.CcpText
+            + _fib.CcpFtn
+            + _fib.CcpHdd
+            + _fib.CcpAtn
+            + _fib.CcpEdn
+            + _fib.CcpTxbx
+            + _fib.CcpHdrTxbx;
+
+        return total <= 0 ? _fib.CcpText : (int)Math.Min(int.MaxValue, total);
     }
 
     #endregion

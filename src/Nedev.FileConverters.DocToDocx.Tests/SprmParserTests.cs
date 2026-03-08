@@ -15,6 +15,66 @@ namespace Nedev.FileConverters.DocToDocx.Tests;
 public class SprmParserTests
 {
     [Fact]
+    public void ReadChpProperties_PreservesFormattingBeyondMainStoryRange()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        var fib = CreateSyntheticFibReader(fib =>
+        {
+            SetAutoProperty(fib, nameof(FibReader.FcMin), (uint)100);
+            SetAutoProperty(fib, nameof(FibReader.CcpText), 5);
+            SetAutoProperty(fib, nameof(FibReader.CcpFtn), 10);
+            SetAutoProperty(fib, nameof(FibReader.FcPlcfBteChpx), (uint)0);
+            SetAutoProperty(fib, nameof(FibReader.LcbPlcfBteChpx), (uint)12);
+        });
+
+        using var wordStream = new MemoryStream(BuildChpxWordStreamPage(100, 110, 115));
+        using var tableStream = new MemoryStream(BuildBteTable(1));
+        using var wordReader = new BinaryReader(wordStream);
+        using var tableReader = new BinaryReader(tableStream);
+
+        var textReader = new Nedev.FileConverters.DocToDocx.Readers.TextReader(wordReader, tableReader, fib);
+        SeedPieces(textReader, startCp: 10, endCp: 15, fileOffset: 110);
+        var parser = new FkpParser(wordReader, tableReader, fib, textReader);
+
+        var properties = parser.ReadChpProperties();
+
+        Assert.Contains(10, properties.Keys);
+        Assert.Contains(14, properties.Keys);
+        Assert.DoesNotContain(15, properties.Keys);
+    }
+
+    [Fact]
+    public void ReadPapProperties_PreservesFormattingBeyondMainStoryRange()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        var fib = CreateSyntheticFibReader(fib =>
+        {
+            SetAutoProperty(fib, nameof(FibReader.FcMin), (uint)100);
+            SetAutoProperty(fib, nameof(FibReader.CcpText), 5);
+            SetAutoProperty(fib, nameof(FibReader.CcpFtn), 10);
+            SetAutoProperty(fib, nameof(FibReader.FcPlcfBtePapx), (uint)4);
+            SetAutoProperty(fib, nameof(FibReader.LcbPlcfBtePapx), (uint)16);
+        });
+
+        using var wordStream = new MemoryStream(BuildPapxWordStreamPage(100, 110, 115));
+        using var tableStream = new MemoryStream(BuildBteTable(1, offset: 4));
+        using var wordReader = new BinaryReader(wordStream);
+        using var tableReader = new BinaryReader(tableStream);
+
+        var textReader = new Nedev.FileConverters.DocToDocx.Readers.TextReader(wordReader, tableReader, fib);
+        SeedPieces(textReader, startCp: 10, endCp: 15, fileOffset: 110);
+        var parser = new FkpParser(wordReader, tableReader, fib, textReader);
+
+        var properties = parser.ReadPapProperties();
+
+        Assert.Contains(10, properties.Keys);
+        Assert.Contains(14, properties.Keys);
+        Assert.DoesNotContain(15, properties.Keys);
+    }
+
+    [Fact]
     public void ApplyToChp_DecodesWord97CharacterOpcodesByFullCode()
     {
         using var stream = new MemoryStream();
@@ -349,6 +409,86 @@ public class SprmParserTests
     private static object? GetPrivateField(object instance, string fieldName)
     {
         return instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(instance);
+    }
+
+    private static FibReader CreateSyntheticFibReader(Action<FibReader> configure)
+    {
+        var fib = new FibReader(new BinaryReader(new MemoryStream(new byte[512])));
+        configure(fib);
+        return fib;
+    }
+
+    private static void SeedPieces(Nedev.FileConverters.DocToDocx.Readers.TextReader textReader, int startCp, int endCp, uint fileOffset)
+    {
+        SetPrivateField(textReader, "_pieces", new List<Piece>
+        {
+            new Piece
+            {
+                CpStart = startCp,
+                CpEnd = endCp,
+                FileOffset = fileOffset,
+                RawFcMasked = fileOffset * 2,
+                IsUnicode = false,
+                Prm = 0
+            }
+        });
+    }
+
+    private static void SetAutoProperty<T>(object instance, string propertyName, T value)
+    {
+        var field = instance.GetType().GetField($"<{propertyName}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(instance, value);
+    }
+
+    private static void SetPrivateField<T>(object instance, string fieldName, T value)
+    {
+        var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(instance, value);
+    }
+
+    private static byte[] BuildBteTable(uint pn, int offset = 0)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.Default, leaveOpen: true);
+        for (var index = 0; index < offset; index++)
+            writer.Write((byte)0);
+        writer.Write(0);
+        writer.Write(5);
+        writer.Write(pn);
+        if (offset > 0)
+            writer.Write(0);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildChpxWordStreamPage(int fcMin, int startFc, int endFc)
+    {
+        var bytes = new byte[WordConsts.FKP_PAGE_SIZE * 2];
+        var pageOffset = WordConsts.FKP_PAGE_SIZE;
+
+        BitConverter.GetBytes(startFc).CopyTo(bytes, pageOffset);
+        BitConverter.GetBytes(endFc).CopyTo(bytes, pageOffset + 4);
+        bytes[pageOffset + 8] = 0;
+        bytes[pageOffset + WordConsts.FKP_PAGE_SIZE - 1] = 1;
+
+        return bytes;
+    }
+
+    private static byte[] BuildPapxWordStreamPage(int fcMin, int startFc, int endFc)
+    {
+        var bytes = new byte[WordConsts.FKP_PAGE_SIZE * 2];
+        var pageOffset = WordConsts.FKP_PAGE_SIZE;
+
+        BitConverter.GetBytes(startFc).CopyTo(bytes, pageOffset);
+        BitConverter.GetBytes(endFc).CopyTo(bytes, pageOffset + 4);
+        bytes[pageOffset + 8] = 20;
+        bytes[pageOffset + 40] = 0;
+        bytes[pageOffset + 41] = 0;
+        bytes[pageOffset + WordConsts.FKP_PAGE_SIZE - 1] = 1;
+
+        return bytes;
     }
 
     private static string ResolvePieceGrpprlHex(Piece? piece, Dictionary<ushort, byte[]> pieceModifiers)
