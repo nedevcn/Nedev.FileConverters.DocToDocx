@@ -1844,7 +1844,7 @@ public partial class DocumentWriter
     {
         var props = run.Properties;
         if (props == null) return;
-        RunPropertiesHelper.WriteRunProperties(_writer, props);
+        RunPropertiesHelper.WriteRunProperties(_writer, props, _document?.Theme);
     }
 
     private static bool RunHasHyperlinkTarget(RunModel run)

@@ -85,7 +85,7 @@ internal static class RunPropertiesHelper
     /// size, highlight, underline, vertAlign, position, character scale, snap-to-grid,
     /// and language.
     /// </summary>
-    public static void WriteRunProperties(XmlWriter writer, RunProperties props)
+    public static void WriteRunProperties(XmlWriter writer, RunProperties props, ThemeModel? theme = null)
     {
         if (!HasRunProperties(props)) return;
 
@@ -93,7 +93,7 @@ internal static class RunPropertiesHelper
         // -> vanish -> outline -> shadow -> emboss -> imprint -> color -> kern
         // -> spacing -> sz -> szCs -> highlight -> u -> vertAlign -> position -> w -> snapToGrid -> lang
         writer.WriteStartElement("w", "rPr", WNs);
-        WriteRunPropertiesContent(writer, props, includeExtended: true);
+        WriteRunPropertiesContent(writer, props, includeExtended: true, theme);
         writer.WriteEndElement(); // w:rPr
     }
 
@@ -101,12 +101,12 @@ internal static class RunPropertiesHelper
     /// Writes the w:rPr element for style-level usage.
     /// Includes the core subset of properties typically stored in styles.
     /// </summary>
-    public static void WriteStyleRunProperties(XmlWriter writer, RunProperties props)
+    public static void WriteStyleRunProperties(XmlWriter writer, RunProperties props, ThemeModel? theme = null)
     {
         if (!HasRunProperties(props)) return;
 
         writer.WriteStartElement("w", "rPr", WNs);
-        WriteRunPropertiesContent(writer, props, includeExtended: false);
+        WriteRunPropertiesContent(writer, props, includeExtended: false, theme);
         writer.WriteEndElement(); // w:rPr
     }
 
@@ -115,7 +115,7 @@ internal static class RunPropertiesHelper
     /// When includeExtended is true, additional properties (hidden, outline/shadow/emboss/imprint,
     /// theme color, kern, spacing, position, character scale, snap-to-grid, language) are emitted.
     /// </summary>
-    internal static void WriteRunPropertiesContent(XmlWriter writer, RunProperties props, bool includeExtended)
+    internal static void WriteRunPropertiesContent(XmlWriter writer, RunProperties props, bool includeExtended, ThemeModel? theme = null)
     {
         // 1. rFonts
         if (!string.IsNullOrEmpty(props.FontName))
@@ -207,16 +207,21 @@ internal static class RunPropertiesHelper
         if (includeExtended && (props.Color != 0 || props.HasRgbColor))
         {
             string? themeColor = ColorHelper.GetThemeColorName(props.Color);
+            string? resolvedThemeHex = ColorHelper.ResolveThemeColorHex(props.Color, theme);
             string colorHex = props.HasRgbColor
                 ? ColorHelper.RgbToHex(props.RgbColor)
                 : ColorHelper.ColorToHex(props.Color);
 
-            if (themeColor != null || colorHex != "auto")
+            if (themeColor != null || colorHex != "auto" || resolvedThemeHex != null)
             {
                 writer.WriteStartElement("w", "color", WNs);
                 if (themeColor != null)
                 {
                     writer.WriteAttributeString("w", "themeColor", WNs, themeColor);
+                    if (resolvedThemeHex != null)
+                    {
+                        writer.WriteAttributeString("w", "val", WNs, resolvedThemeHex);
+                    }
                 }
                 else
                 {
@@ -228,11 +233,24 @@ internal static class RunPropertiesHelper
         else if (!includeExtended && props.Color != 0)
         {
             // Style-level: simple ICO index only
+            string? themeColor = ColorHelper.GetThemeColorName(props.Color);
+            string? resolvedThemeHex = ColorHelper.ResolveThemeColorHex(props.Color, theme);
             var colorHex = ColorHelper.ColorToHex(props.Color);
-            if (colorHex != "auto")
+            if (themeColor != null || colorHex != "auto" || resolvedThemeHex != null)
             {
                 writer.WriteStartElement("w", "color", WNs);
-                writer.WriteAttributeString("w", "val", WNs, colorHex);
+                if (themeColor != null)
+                {
+                    writer.WriteAttributeString("w", "themeColor", WNs, themeColor);
+                    if (resolvedThemeHex != null)
+                    {
+                        writer.WriteAttributeString("w", "val", WNs, resolvedThemeHex);
+                    }
+                }
+                else
+                {
+                    writer.WriteAttributeString("w", "val", WNs, colorHex);
+                }
                 writer.WriteEndElement();
             }
         }

@@ -759,6 +759,24 @@ public class ThemeModel
     
     /// <summary>Map of theme color names to hex values (if available)</summary>
     public Dictionary<string, string> ColorMap { get; set; } = new();
+
+    /// <summary>Major Latin font from the theme font scheme.</summary>
+    public string? MajorLatinFont { get; set; }
+
+    /// <summary>Major East Asian font from the theme font scheme.</summary>
+    public string? MajorEastAsiaFont { get; set; }
+
+    /// <summary>Major complex script font from the theme font scheme.</summary>
+    public string? MajorBidiFont { get; set; }
+
+    /// <summary>Minor Latin font from the theme font scheme.</summary>
+    public string? MinorLatinFont { get; set; }
+
+    /// <summary>Minor East Asian font from the theme font scheme.</summary>
+    public string? MinorEastAsiaFont { get; set; }
+
+    /// <summary>Minor complex script font from the theme font scheme.</summary>
+    public string? MinorBidiFont { get; set; }
 }
 public class CustomGeometry
 {

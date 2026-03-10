@@ -51,16 +51,20 @@ public class StylesWriter
     private void WriteDocumentDefaults()
     {
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var bodyLatin = _document?.Theme.MinorLatinFont ?? _document?.Theme.MajorLatinFont ?? "Calibri";
+        var bodyEastAsia = _document?.Theme.MinorEastAsiaFont ?? _document?.Theme.MajorEastAsiaFont ?? "SimSun";
+        var bodyBidi = _document?.Theme.MinorBidiFont ?? _document?.Theme.MajorBidiFont ?? "Times New Roman";
+
         _writer.WriteStartElement("w", "docDefaults", wNs);
         
         // Run defaults
         _writer.WriteStartElement("w", "rPrDefault", wNs);
         _writer.WriteStartElement("w", "rPr", wNs);
         _writer.WriteStartElement("w", "rFonts", wNs);
-        _writer.WriteAttributeString("w", "ascii", wNs, "Calibri");
-        _writer.WriteAttributeString("w", "eastAsia", wNs, "SimSun");
-        _writer.WriteAttributeString("w", "hAnsi", wNs, "Calibri");
-        _writer.WriteAttributeString("w", "cs", wNs, "Times New Roman");
+        _writer.WriteAttributeString("w", "ascii", wNs, bodyLatin);
+        _writer.WriteAttributeString("w", "eastAsia", wNs, bodyEastAsia);
+        _writer.WriteAttributeString("w", "hAnsi", wNs, bodyLatin);
+        _writer.WriteAttributeString("w", "cs", wNs, bodyBidi);
         _writer.WriteEndElement();
         _writer.WriteStartElement("w", "sz", wNs);
         _writer.WriteAttributeString("w", "val", wNs, "24");
@@ -961,6 +965,6 @@ public class StylesWriter
     /// </summary>
     private void WriteStyleRunProperties(RunProperties props)
     {
-        RunPropertiesHelper.WriteStyleRunProperties(_writer, props);
+        RunPropertiesHelper.WriteStyleRunProperties(_writer, props, _document?.Theme);
     }
 }

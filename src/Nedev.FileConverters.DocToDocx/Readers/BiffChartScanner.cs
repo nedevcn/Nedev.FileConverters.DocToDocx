@@ -57,6 +57,7 @@ public static class BiffChartScanner
         var cells = new Dictionary<(int r, int c), double>();
         var strings = new Dictionary<(int r, int c), string>();
         var sst = new List<string>();
+        string? firstSheetName = null;
         
         using var ms = new MemoryStream(biffBytes);
         using var reader = new BinaryReader(ms);
@@ -75,6 +76,13 @@ public static class BiffChartScanner
                 if (id == 0x00FC) // SST
                 {
                     ParseSst(reader, length, sst);
+                }
+                else if (id == 0x0085) // BOUNDSHEET
+                {
+                    if (string.IsNullOrEmpty(firstSheetName))
+                    {
+                        firstSheetName = ParseBoundSheetName(reader, length);
+                    }
                 }
                 else if (id == 0x00FD) // LABELSST
                 {
@@ -110,6 +118,10 @@ public static class BiffChartScanner
                         cells[(row, col)] = DecodeRk(rk);
                     }
                 }
+                else if (id == 0x00BD) // MULRK
+                {
+                    ParseMulRk(reader, length, cells);
+                }
                 else if (id == 0x0204) // LABEL
                 {
                     if (length >= 8)
@@ -127,6 +139,21 @@ public static class BiffChartScanner
                                 strings[(row, col)] = Encoding.Unicode.GetString(reader.ReadBytes(Math.Min(strLen * 2, length - 9)));
                             else
                                 strings[(row, col)] = Encoding.Default.GetString(reader.ReadBytes(Math.Min((int)strLen, length - 9)));
+                        }
+                    }
+                }
+                else if (id == 0x0205) // BOOLERR
+                {
+                    if (length >= 8)
+                    {
+                        int row = reader.ReadUInt16();
+                        int col = reader.ReadUInt16();
+                        reader.ReadUInt16(); // xf
+                        byte val = reader.ReadByte();
+                        byte isError = reader.ReadByte();
+                        if (isError == 0)
+                        {
+                            cells[(row, col)] = val != 0 ? 1d : 0d;
                         }
                     }
                 }
@@ -243,6 +270,21 @@ public static class BiffChartScanner
         {
             model.Categories = categories;
             model.Series = seriesList;
+            if (seriesList.Count <= 1)
+            {
+                model.ShowLegend = false;
+            }
+
+            if (strings.TryGetValue((0, 0), out var topLeftText) && !string.IsNullOrWhiteSpace(topLeftText) && string.IsNullOrWhiteSpace(model.CategoryAxisTitle))
+            {
+                model.CategoryAxisTitle = topLeftText;
+            }
+
+            if ((string.IsNullOrWhiteSpace(model.Title) || string.Equals(model.Title, model.SourceStreamName, StringComparison.OrdinalIgnoreCase))
+                && !string.IsNullOrWhiteSpace(firstSheetName))
+            {
+                model.Title = firstSheetName;
+            }
 
             // heuristic type detection
             if (seriesList.Count == 1 && categories.Count > 1)
@@ -259,6 +301,44 @@ public static class BiffChartScanner
                 else if (name.Contains("scatter")) model.Type = ChartType.Scatter;
             }
         }
+    }
+
+    private static void ParseMulRk(BinaryReader reader, int length, Dictionary<(int r, int c), double> cells)
+    {
+        if (length < 6)
+            return;
+
+        int row = reader.ReadUInt16();
+        int firstCol = reader.ReadUInt16();
+        int rkEntryCount = (length - 6) / 6;
+        for (int i = 0; i < rkEntryCount; i++)
+        {
+            reader.ReadUInt16(); // xf
+            uint rk = reader.ReadUInt32();
+            cells[(row, firstCol + i)] = DecodeRk(rk);
+        }
+
+        reader.ReadUInt16(); // last col
+    }
+
+    private static string? ParseBoundSheetName(BinaryReader reader, int length)
+    {
+        if (length < 8)
+            return null;
+
+        reader.ReadUInt32();
+        reader.ReadByte();
+        reader.ReadByte();
+        byte nameLength = reader.ReadByte();
+        byte flags = reader.ReadByte();
+        bool isUnicode = (flags & 0x01) != 0;
+
+        if (nameLength == 0)
+            return null;
+
+        return isUnicode
+            ? Encoding.Unicode.GetString(reader.ReadBytes(nameLength * 2))
+            : Encoding.Default.GetString(reader.ReadBytes(nameLength));
     }
 
     private static void ParseSst(BinaryReader reader, int length, List<string> sst)

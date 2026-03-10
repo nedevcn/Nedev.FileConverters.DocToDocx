@@ -159,5 +159,54 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Equal("Cat1", model2.Categories[0]);
             Assert.Equal(ChartType.Column, model2.Type);
         }
+
+        [Fact]
+        public void UsesTopLeftLabelAndSheetName_ForRecoveredMetadata()
+        {
+            double[,] data = {
+                { double.NaN, 5, 6 },
+                { 0, 10, 20 }
+            };
+
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, Encoding.Default, leaveOpen: true))
+            {
+                w.Write((ushort)0x0809);
+                w.Write((ushort)0);
+
+                var sheetName = Encoding.Default.GetBytes("Sales Sheet");
+                w.Write((ushort)0x0085);
+                w.Write((ushort)(8 + sheetName.Length));
+                w.Write((uint)0);
+                w.Write((byte)0);
+                w.Write((byte)0);
+                w.Write((byte)sheetName.Length);
+                w.Write((byte)0);
+                w.Write(sheetName);
+            }
+
+            var matrixBytes = BuildBiffMatrix(data, rowLabels: new[] { "Series1" }, colLabels: new[] { "Jan", "Feb" });
+            ms.Write(matrixBytes, 4, matrixBytes.Length - 4);
+
+            using (var w = new BinaryWriter(ms, Encoding.Default, leaveOpen: true))
+            {
+                var label = Encoding.Default.GetBytes("Month");
+                w.Write((ushort)0x0204);
+                w.Write((ushort)(8 + 1 + label.Length));
+                w.Write((ushort)0);
+                w.Write((ushort)0);
+                w.Write((ushort)0);
+                w.Write((ushort)label.Length);
+                w.Write((byte)0);
+                w.Write(label);
+            }
+
+            var model = new ChartModel { SourceBytes = ms.ToArray(), SourceStreamName = "Chart1" };
+            BiffChartScanner.TryPopulateChart(model);
+
+            Assert.Equal("Sales Sheet", model.Title);
+            Assert.Equal("Month", model.CategoryAxisTitle);
+            Assert.False(model.ShowLegend);
+        }
     }
 }

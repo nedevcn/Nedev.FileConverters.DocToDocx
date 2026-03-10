@@ -31,29 +31,17 @@ public class ChartsWriter
         _writer.WriteAttributeString("xmlns", "a", null, aNs);
         _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
 
+        _writer.WriteStartElement("c", "lang", cNs);
+        _writer.WriteAttributeString("val", "en-US");
+        _writer.WriteEndElement();
+
         // Chart properties (very minimal)
         _writer.WriteStartElement("c", "chart", cNs);
 
         // Title (optional)
         if (!string.IsNullOrEmpty(chart.Title))
         {
-            _writer.WriteStartElement("c", "title", cNs);
-            _writer.WriteStartElement("c", "tx", cNs);
-            _writer.WriteStartElement("c", "rich", cNs);
-            _writer.WriteStartElement("a", "bodyPr", aNs);
-            _writer.WriteEndElement(); // a:bodyPr
-            _writer.WriteStartElement("a", "lstStyle", aNs);
-            _writer.WriteEndElement(); // a:lstStyle
-            _writer.WriteStartElement("a", "p", aNs);
-            _writer.WriteStartElement("a", "r", aNs);
-            _writer.WriteStartElement("a", "t", aNs);
-            _writer.WriteString(chart.Title);
-            _writer.WriteEndElement(); // a:t
-            _writer.WriteEndElement(); // a:r
-            _writer.WriteEndElement(); // a:p
-            _writer.WriteEndElement(); // c:rich
-            _writer.WriteEndElement(); // c:tx
-            _writer.WriteEndElement(); // c:title
+            WriteRichTextElement("title", chart.Title, cNs, aNs);
         }
 
         // Plot area with a single chart type. For most chart types we use a
@@ -63,6 +51,7 @@ public class ChartsWriter
         _writer.WriteStartElement("c", GetChartElementName(chart.Type), cNs);
 
         bool isPie = chart.Type == ChartType.Pie || chart.Type == ChartType.Doughnut;
+        WriteChartTypeOptions(chart, cNs);
         if (!isPie)
         {
             WriteCategoryAxisData(chart);
@@ -75,17 +64,20 @@ public class ChartsWriter
         // Axes (catAx + valAx) with default ids; omit for pie/doughnut
         if (!isPie)
         {
-            WriteDefaultAxes();
+            WriteDefaultAxes(chart);
         }
 
         _writer.WriteEndElement(); // c:plotArea
 
         // Legend (optional simple right-side legend)
-        _writer.WriteStartElement("c", "legend", cNs);
-        _writer.WriteStartElement("c", "legendPos", cNs);
-        _writer.WriteAttributeString("val", "r");
-        _writer.WriteEndElement(); // c:legendPos
-        _writer.WriteEndElement(); // c:legend
+        if (chart.ShowLegend)
+        {
+            _writer.WriteStartElement("c", "legend", cNs);
+            _writer.WriteStartElement("c", "legendPos", cNs);
+            _writer.WriteAttributeString("val", "r");
+            _writer.WriteEndElement(); // c:legendPos
+            _writer.WriteEndElement(); // c:legend
+        }
 
         _writer.WriteEndElement(); // c:chart
         _writer.WriteEndElement(); // c:chartSpace
@@ -100,9 +92,7 @@ public class ChartsWriter
         ChartType.Bar => "barChart",
         ChartType.Column => "barChart", // column is semantically a clustered bar in CT
         ChartType.Pie => "pieChart",
-        ChartType.Doughnut => "pieChart", // OpenXML has a separate doughnutChart element, but
-                                             // Word will happily treat a pieChart with a
-                                             // doughnut style. We'll fold it for now.
+        ChartType.Doughnut => "doughnutChart",
         ChartType.Area => "areaChart",
         ChartType.Scatter => "scatterChart",
         ChartType.Radar => "radarChart",
@@ -113,9 +103,10 @@ public class ChartsWriter
     /// Writes c:catAx and c:valAx with fixed ids (1 and 2). This is enough for
     /// Word to treat the part as a valid chart with category/value axes.
     /// </summary>
-    private void WriteDefaultAxes()
+    private void WriteDefaultAxes(ChartModel chart)
     {
         const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
         // Category axis
         _writer.WriteStartElement("c", "catAx", cNs);
@@ -130,6 +121,10 @@ public class ChartsWriter
         _writer.WriteStartElement("c", "axPos", cNs);
         _writer.WriteAttributeString("val", "b");
         _writer.WriteEndElement();
+        if (!string.IsNullOrEmpty(chart.CategoryAxisTitle))
+        {
+            WriteRichTextElement("title", chart.CategoryAxisTitle, cNs, aNs);
+        }
         _writer.WriteStartElement("c", "crossAx", cNs);
         _writer.WriteAttributeString("val", "2");
         _writer.WriteEndElement();
@@ -148,10 +143,76 @@ public class ChartsWriter
         _writer.WriteStartElement("c", "axPos", cNs);
         _writer.WriteAttributeString("val", "l");
         _writer.WriteEndElement();
+        if (!string.IsNullOrEmpty(chart.ValueAxisTitle))
+        {
+            WriteRichTextElement("title", chart.ValueAxisTitle, cNs, aNs);
+        }
         _writer.WriteStartElement("c", "crossAx", cNs);
         _writer.WriteAttributeString("val", "1");
         _writer.WriteEndElement();
         _writer.WriteEndElement(); // c:valAx
+    }
+
+    private void WriteChartTypeOptions(ChartModel chart, string cNs)
+    {
+        switch (chart.Type)
+        {
+            case ChartType.Bar:
+            case ChartType.Column:
+                _writer.WriteStartElement("c", "barDir", cNs);
+                _writer.WriteAttributeString("val", chart.Type == ChartType.Bar ? "bar" : "col");
+                _writer.WriteEndElement();
+                break;
+            case ChartType.Line:
+            case ChartType.Area:
+                _writer.WriteStartElement("c", "grouping", cNs);
+                _writer.WriteAttributeString("val", "standard");
+                _writer.WriteEndElement();
+                break;
+            case ChartType.Scatter:
+                _writer.WriteStartElement("c", "scatterStyle", cNs);
+                _writer.WriteAttributeString("val", "lineMarker");
+                _writer.WriteEndElement();
+                break;
+            case ChartType.Radar:
+                _writer.WriteStartElement("c", "radarStyle", cNs);
+                _writer.WriteAttributeString("val", "standard");
+                _writer.WriteEndElement();
+                break;
+            case ChartType.Pie:
+            case ChartType.Doughnut:
+                _writer.WriteStartElement("c", "varyColors", cNs);
+                _writer.WriteAttributeString("val", "1");
+                _writer.WriteEndElement();
+                if (chart.Type == ChartType.Doughnut)
+                {
+                    _writer.WriteStartElement("c", "holeSize", cNs);
+                    _writer.WriteAttributeString("val", "50");
+                    _writer.WriteEndElement();
+                }
+                break;
+        }
+    }
+
+    private void WriteRichTextElement(string elementName, string text, string cNs, string aNs)
+    {
+        _writer.WriteStartElement("c", elementName, cNs);
+        _writer.WriteStartElement("c", "tx", cNs);
+        _writer.WriteStartElement("c", "rich", cNs);
+        _writer.WriteStartElement("a", "bodyPr", aNs);
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("a", "lstStyle", aNs);
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("a", "p", aNs);
+        _writer.WriteStartElement("a", "r", aNs);
+        _writer.WriteStartElement("a", "t", aNs);
+        _writer.WriteString(text);
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
     }
 
     /// <summary>

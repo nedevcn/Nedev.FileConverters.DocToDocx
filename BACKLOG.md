@@ -21,11 +21,13 @@ This backlog turns the current audit findings into a practical implementation or
    - Goal: move from editable placeholder charts toward better source reconstruction.
    - Deliverables: chart titles, legend presence, axis labels, more series metadata, and broader BIFF record handling.
    - Exit criteria: common embedded Office charts preserve more than category/value grids.
+   - Status: partially completed. Chart XML now emits chart titles, axis titles, legend visibility, doughnut/bar/radar/scatter-specific options, and the BIFF scanner recovers sheet-name/title hints plus additional record types.
 
 4. Theme interpretation beyond raw extraction
    - Goal: use extracted theme XML to influence generated formatting instead of only preserving the payload.
    - Deliverables: parsed color scheme, font scheme, and theme-aware color resolution.
    - Exit criteria: theme-backed formatting in converted DOCX matches source documents more closely.
+   - Status: partially completed. Theme XML is now parsed into color/font metadata, default DOCX fonts prefer the extracted body theme fonts, and theme-referenced run colors can be resolved to concrete RGB values in generated OOXML.
 
 ## P2
 

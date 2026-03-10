@@ -1,3 +1,5 @@
+using Nedev.FileConverters.DocToDocx.Models;
+
 namespace Nedev.FileConverters.DocToDocx.Utils;
 
 /// <summary>
@@ -57,10 +59,19 @@ public static class ColorHelper
     /// <summary>
     /// OOXML theme color names mapping from MS-DOC theme index
     /// </summary>
-    private static readonly string[] ThemeColorNames = new string[]
+    private static readonly string[] ThemeColorSchemeNames = new string[]
     {
         "dk1", "lt1", "dk2", "lt2", "accent1", "accent2", 
         "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"
+    };
+
+    /// <summary>
+    /// WordprocessingML theme color names for w:color/@w:themeColor.
+    /// </summary>
+    private static readonly string[] ThemeColorWordNames = new string[]
+    {
+        "dark1", "light1", "dark2", "light2", "accent1", "accent2",
+        "accent3", "accent4", "accent5", "accent6", "hyperlink", "followedHyperlink"
     };
 
     /// <summary>
@@ -148,9 +159,39 @@ public static class ColorHelper
         if ((color & 0x01000000) != 0)
         {
             int index = color & 0xFF;
-            if (index >= 0 && index < ThemeColorNames.Length)
-                return ThemeColorNames[index];
+            if (index >= 0 && index < ThemeColorWordNames.Length)
+                return ThemeColorWordNames[index];
         }
         return null;
+    }
+
+    /// <summary>
+    /// Gets the DrawingML theme scheme color name used by theme1.xml.
+    /// </summary>
+    public static string? GetThemeSchemeColorName(int color)
+    {
+        if ((color & 0x01000000) != 0)
+        {
+            int index = color & 0xFF;
+            if (index >= 0 && index < ThemeColorSchemeNames.Length)
+                return ThemeColorSchemeNames[index];
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves a theme-backed color to a concrete RGB hex value using the parsed theme metadata.
+    /// </summary>
+    public static string? ResolveThemeColorHex(int color, ThemeModel? theme)
+    {
+        if (theme == null || theme.ColorMap.Count == 0)
+            return null;
+
+        var schemeName = GetThemeSchemeColorName(color);
+        if (schemeName == null)
+            return null;
+
+        return theme.ColorMap.TryGetValue(schemeName, out var hex) ? hex : null;
     }
 }
