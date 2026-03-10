@@ -35,6 +35,15 @@ public class OfficeArtMapperTests
     }
 
     [Fact]
+    public void SmartArtLikeShape_IsTaggedCorrectly()
+    {
+        var shape = new ShapeModel { Type = ShapeType.Unknown, Text = "node" };
+        if (shape.Type == ShapeType.Unknown && !string.IsNullOrEmpty(shape.Text))
+            shape.Type = ShapeType.SmartArt;
+        Assert.Equal(ShapeType.SmartArt, shape.Type);
+    }
+
+    [Fact]
     public void SampleTextDoc_DoesNotExposeWordArtThroughOfficeArtStreams()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));

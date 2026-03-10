@@ -248,5 +248,33 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Contains("<c:v>0</c:v>", xml); // padding
             Assert.DoesNotContain("<c:v>6</c:v>", xml); // truncated
         }
+
+        [Fact]
+        public void WriteChart_RespectsTextColors()
+        {
+            var model = new ChartModel
+            {
+                Type = ChartType.Column,
+                Title = "Colorful",
+                CategoryAxisTitle = "X",
+                ValueAxisTitle = "Y",
+                TitleColor = 0x112233,
+                CategoryAxisTitleColor = 0x445566,
+                ValueAxisTitleColor = 0x778899,
+                Categories = new List<string> { "A" },
+                Series = { new ChartSeries { Name = "S", Values = new List<double> { 1 } } }
+            };
+
+            using var ms = new MemoryStream();
+            using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer).WriteChart(model);
+            writer.Flush();
+            string xml = Encoding.UTF8.GetString(ms.ToArray());
+
+            // ColorHelper outputs BGR hex, so the byte order is reversed compared to the numeric value.
+            Assert.Contains("srgbClr val=\"332211\"", xml);
+            Assert.Contains("srgbClr val=\"665544\"", xml);
+            Assert.Contains("srgbClr val=\"998877\"", xml);
+        }
     }
 }

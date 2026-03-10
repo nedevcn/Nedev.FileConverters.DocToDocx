@@ -1,5 +1,6 @@
 using System.Xml;
 using Nedev.FileConverters.DocToDocx.Models;
+using Nedev.FileConverters.DocToDocx.Utils;
 
 namespace Nedev.FileConverters.DocToDocx.Writers;
 
@@ -53,7 +54,7 @@ public class ChartsWriter
 
         if (!string.IsNullOrEmpty(chart.Title))
         {
-            WriteRichTextElement("title", chart.Title, cNs, aNs);
+            WriteRichTextElement("title", chart.Title, cNs, aNs, chart.TitleColor);
         }
         else
         {
@@ -151,7 +152,7 @@ public class ChartsWriter
         _writer.WriteEndElement();
         if (!string.IsNullOrEmpty(chart.CategoryAxisTitle))
         {
-            WriteRichTextElement("title", chart.CategoryAxisTitle, cNs, aNs);
+            WriteRichTextElement("title", chart.CategoryAxisTitle, cNs, aNs, chart.CategoryAxisTitleColor);
         }
         _writer.WriteStartElement("c", "tickLblPos", cNs);
         _writer.WriteAttributeString("val", "nextTo");
@@ -181,7 +182,7 @@ public class ChartsWriter
         _writer.WriteEndElement();
         if (!string.IsNullOrEmpty(chart.ValueAxisTitle))
         {
-            WriteRichTextElement("title", chart.ValueAxisTitle, cNs, aNs);
+            WriteRichTextElement("title", chart.ValueAxisTitle, cNs, aNs, chart.ValueAxisTitleColor);
         }
         _writer.WriteStartElement("c", "majorGridlines", cNs);
         _writer.WriteEndElement();
@@ -273,7 +274,7 @@ public class ChartsWriter
         _writer.WriteEndElement();
     }
 
-    private void WriteRichTextElement(string elementName, string text, string cNs, string aNs)
+    private void WriteRichTextElement(string elementName, string text, string cNs, string aNs, int color = 0)
     {
         _writer.WriteStartElement("c", elementName, cNs);
         _writer.WriteStartElement("c", "tx", cNs);
@@ -284,6 +285,16 @@ public class ChartsWriter
         _writer.WriteEndElement();
         _writer.WriteStartElement("a", "p", aNs);
         _writer.WriteStartElement("a", "r", aNs);
+        if (color != 0)
+        {
+            _writer.WriteStartElement("a", "rPr", aNs);
+            _writer.WriteStartElement("a", "solidFill", aNs);
+            _writer.WriteStartElement("a", "srgbClr", aNs);
+            _writer.WriteAttributeString("val", ColorHelper.ResolveColorHex(color, null, "000000"));
+            _writer.WriteEndElement(); // a:srgbClr
+            _writer.WriteEndElement(); // a:solidFill
+            _writer.WriteEndElement(); // a:rPr
+        }
         WriteTextElement("a", "t", aNs, text);
         _writer.WriteEndElement();
         _writer.WriteEndElement();

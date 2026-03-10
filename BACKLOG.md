@@ -27,7 +27,7 @@ This backlog turns the current audit findings into a practical implementation or
    - Goal: use extracted theme XML to influence generated formatting instead of only preserving the payload.
    - Deliverables: parsed color scheme, font scheme, and theme-aware color resolution.
    - Exit criteria: theme-backed formatting in converted DOCX matches source documents more closely.
-   - Status: partially completed. Theme XML is now parsed into color/font metadata, default DOCX fonts prefer the extracted body theme fonts, and theme-referenced colors are emitted across body runs, hyperlinks, borders, shading, shapes, comments, footnotes, endnotes, and paragraph-based header/footer content with concrete RGB fallbacks where possible.
+   - Status: **extended in this round.** Chart parts now accept explicit color hints on titles/axis labels, and writer emits the corresponding `<a:rPr>/<a:solidFill>` elements (tests verify the hex values).  Base document writer continues to resolve theme colors for runs, borders, shading, shapes, headers/footers, etc.
 
 11. Propagated theme-aware run formatting through hyperlink runs in the main document writer.
 12. Replaced remaining direct `ColorToHex` run-color fallbacks with theme-aware resolved color output.
@@ -108,8 +108,8 @@ unit test suite (now 17/17 converter tests passing).
 
 5. Nested table robustness
    - Goal: harden stack-based nested table recovery for malformed and deeply nested inputs.
-   - Deliverables: additional regression fixtures for merge anomalies, cell boundary corruption, and mixed nested-content layouts.
-   - Exit criteria: fewer flattening or misplaced-table fallbacks in complex documents.
+   - Deliverables: additional regression fixtures for merge anomalies, cell boundary corruption, and mixed nested-content layouts.  Also ensure writer can emit three‑level nests without breaking.
+   - Exit criteria: fewer flattening or misplaced-table fallbacks in complex documents; tests exist for deep nesting.  Basic three‑level nesting now round-trips correctly, though malformed or extreme depth inputs still need broader fuzzing.
 
 6. Hostile-input parser coverage
    - Goal: add systematic malformed-input coverage for SPRM, FKP, CLX, and OLE parsing.
@@ -125,10 +125,11 @@ unit test suite (now 17/17 converter tests passing).
      exercise common SmartArt shapes.
    - Status: **completed for this round.** Custom geometry now emits multiple
      contours correctly, group containers are written (with child nvSpPr
-     identifiers), and a basic linear-gradient fill model works in both reader
-     and writer; unit tests cover all of the above and currently pass.  Broader
-     SmartArt semantics, non-linear or complex gradients, and sophisticated
-     transform handling remain future work.
+     identifiers), shapes that carry text are tagged as `SmartArt` in the model,
+     and a basic linear-gradient fill model works in both reader and writer; unit
+     tests cover all of the above and currently pass.  Broader SmartArt semantics,
+     non-linear or complex gradients, and sophisticated transform handling remain
+     future work.
 
 ## Nice-to-have
 

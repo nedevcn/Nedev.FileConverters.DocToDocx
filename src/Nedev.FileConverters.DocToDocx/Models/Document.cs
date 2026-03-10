@@ -442,6 +442,7 @@ public enum ShapeType
     Ellipse,
     Textbox,
     Custom,
+    SmartArt,
     Group
 }
 

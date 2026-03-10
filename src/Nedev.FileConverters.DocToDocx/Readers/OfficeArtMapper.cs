@@ -215,7 +215,8 @@ public static class OfficeArtMapper
                             shape.Text = text;
                             if (shape.Type == ShapeType.Unknown)
                             {
-                                shape.Type = ShapeType.Textbox;
+                                // unclassified shapes with text are likely SmartArt nodes
+                                shape.Type = ShapeType.SmartArt;
                             }
                         }
                     }

@@ -579,6 +579,81 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void WriteDocument_DeeplyNestedTable_ThreeLevels()
+        {
+            // build level3
+            var level3 = new TableModel { Index = 2, ColumnCount = 1 };
+            var r3 = new TableRowModel();
+            var c3 = new TableCellModel { Index = 0, RowIndex = 0, ColumnIndex = 0 };
+            c3.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "L3" } } });
+            r3.Cells.Add(c3);
+            level3.Rows.Add(r3);
+
+            // level2 contains level3
+            var level2 = new TableModel { Index = 1, ColumnCount = 1 };
+            var r2 = new TableRowModel();
+            var c2 = new TableCellModel { Index = 0, RowIndex = 0, ColumnIndex = 0 };
+            c2.Paragraphs.Add(new ParagraphModel { Type = ParagraphType.NestedTable, NestedTable = level3 });
+            r2.Cells.Add(c2);
+            level2.Rows.Add(r2);
+
+            // level1 contains level2
+            var level1 = new TableModel { Index = 0, ColumnCount = 1 };
+            var r1 = new TableRowModel();
+            var c1 = new TableCellModel { Index = 0, RowIndex = 0, ColumnIndex = 0 };
+            c1.Paragraphs.Add(new ParagraphModel { Type = ParagraphType.NestedTable, NestedTable = level2 });
+            r1.Cells.Add(c1);
+            level1.Rows.Add(r1);
+
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "start" } } });
+            doc.Paragraphs.Add(new ParagraphModel { Type = ParagraphType.NestedTable, NestedTable = level1 });
+
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                var dw = new DocumentWriter(writer);
+                dw.WriteDocument(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+
+            int count = xml.Split("<w:tbl").Length - 1;
+            Assert.True(count >= 3, "expected at least three tables, got " + count);
+            Assert.Contains("L3", xml);
+        }
+
+        [Fact]
+        public void WriteDocument_SmartArtShape_IsEmittedWithText()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Index = 0, Runs = { new RunModel { Text = "body" } } });
+            doc.Shapes.Add(new ShapeModel
+            {
+                Id = 10,
+                Type = ShapeType.SmartArt,
+                ParagraphIndexHint = 0,
+                Text = "node text"
+            });
+
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                new DocumentWriter(writer).WriteDocument(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+
+            Assert.Contains("node text", xml);
+            // ensure text appears inside a wps:txbx (vector shape text box)
+            Assert.Contains("<wps:txbx", xml);
+        }
+
+        [Fact]
         public void ZipWriter_FullPackage_HasDocumentEntry()
         {
             var doc = new DocumentModel();

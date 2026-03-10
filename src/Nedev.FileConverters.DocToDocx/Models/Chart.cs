@@ -57,9 +57,24 @@ public class ChartModel
     }
 
     /// <summary>
+    /// Optional color of the chart title text (RGB integer, zero = none).
+    /// </summary>
+    public int TitleColor { get; set; }
+
+    /// <summary>
     /// Optional title displayed on the category (X) axis.
     /// </summary>
     public string? CategoryAxisTitle { get; set; }
+
+    /// <summary>
+    /// Optional color for the category-axis title text (RGB integer, zero = none).
+    /// </summary>
+    public int CategoryAxisTitleColor { get; set; }
+
+    /// <summary>
+    /// Optional color for the value-axis title text (RGB integer, zero = none).
+    /// </summary>
+    public int ValueAxisTitleColor { get; set; }
 
     /// <summary>
     /// Optional title displayed on the value (Y) axis.
