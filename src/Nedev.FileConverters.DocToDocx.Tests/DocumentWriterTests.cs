@@ -360,6 +360,88 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void WriteDocument_HeaderFooterParagraphs_UseThemeContext_AndDisableExternalHyperlinks()
+        {
+            var doc = new DocumentModel
+            {
+                Theme = new ThemeModel()
+            };
+            doc.Theme.ColorMap["accent1"] = "4472C4";
+
+            doc.HeadersFooters.Headers.Add(new HeaderFooterModel
+            {
+                Type = HeaderFooterType.HeaderOdd,
+                Paragraphs =
+                {
+                    new ParagraphModel
+                    {
+                        Runs =
+                        {
+                            new RunModel
+                            {
+                                Text = "header link",
+                                IsHyperlink = true,
+                                HyperlinkUrl = "https://example.com",
+                                Properties = new RunProperties
+                                {
+                                    Color = 0x01000000 | 4,
+                                    IsUnderline = true,
+                                    UnderlineType = UnderlineType.Single
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
+            var headerXml = new StreamReader(zip.GetEntry("word/header2.xml").Open()).ReadToEnd();
+
+            Assert.Contains("themeColor=\"accent1\"", headerXml);
+            Assert.Contains("val=\"4472C4\"", headerXml);
+            Assert.Contains("header link", headerXml);
+            Assert.DoesNotContain("<w:hyperlink", headerXml);
+        }
+
+        [Fact]
+        public void WriteDocument_HeaderFooterTextFallback_SanitizesXmlUnsafeCharacters()
+        {
+            var doc = new DocumentModel();
+            doc.HeadersFooters.Headers.Add(new HeaderFooterModel
+            {
+                Type = HeaderFooterType.HeaderOdd,
+                Text = " HDR\u0001\uFFFD "
+            });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
+            var headerXml = new StreamReader(zip.GetEntry("word/header2.xml").Open()).ReadToEnd();
+
+            Assert.Contains("xml:space=\"preserve\"", headerXml);
+            Assert.Contains("> HDR  </w:t>", headerXml);
+
+            using var reader = XmlReader.Create(new StringReader(headerXml));
+            while (reader.Read()) { }
+        }
+
+        [Fact]
         public void GeneratedPackage_IsWellFormedXml()
         {
             var doc = new DocumentModel();

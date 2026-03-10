@@ -21,13 +21,13 @@ This backlog turns the current audit findings into a practical implementation or
    - Goal: move from editable placeholder charts toward better source reconstruction.
    - Deliverables: chart titles, legend presence, axis labels, more series metadata, and broader BIFF record handling.
    - Exit criteria: common embedded Office charts preserve more than category/value grids.
-   - Status: partially completed. Chart XML now emits chart titles, axis titles, legend visibility, doughnut/bar/radar/scatter-specific options, and the BIFF scanner recovers sheet-name/title hints, additional record types, simple `FORMULA` numeric results, follow-up `STRING` values, and single-series value-axis titles.
+   - Status: partially completed. Chart XML now emits chart titles, axis titles, legend visibility, axis references, default blank/visibility settings, doughnut/bar/radar/scatter-specific options, and the BIFF scanner recovers sheet-name/title hints, additional record types, simple `FORMULA` numeric results, follow-up `STRING` values, and single-series value-axis titles.
 
 4. Theme interpretation beyond raw extraction
    - Goal: use extracted theme XML to influence generated formatting instead of only preserving the payload.
    - Deliverables: parsed color scheme, font scheme, and theme-aware color resolution.
    - Exit criteria: theme-backed formatting in converted DOCX matches source documents more closely.
-   - Status: partially completed. Theme XML is now parsed into color/font metadata, default DOCX fonts prefer the extracted body theme fonts, and theme-referenced colors are emitted across body runs, hyperlinks, borders, shading, shapes, comments, footnotes, and endnotes with concrete RGB fallbacks where possible.
+   - Status: partially completed. Theme XML is now parsed into color/font metadata, default DOCX fonts prefer the extracted body theme fonts, and theme-referenced colors are emitted across body runs, hyperlinks, borders, shading, shapes, comments, footnotes, endnotes, and paragraph-based header/footer content with concrete RGB fallbacks where possible.
 
 11. Propagated theme-aware run formatting through hyperlink runs in the main document writer.
 12. Replaced remaining direct `ColorToHex` run-color fallbacks with theme-aware resolved color output.
@@ -47,6 +47,11 @@ This backlog turns the current audit findings into a practical implementation or
 8. Added radar source-name chart type detection.
 9. Replaced the remaining direct reader-side console warnings with structured logger warnings.
 10. Downgraded noisy package/table trace logs from `Info` to `Debug` so normal library calls stay quiet.
+11. Bound header/footer paragraph writing to document theme/style context instead of treating it as a context-free fragment.
+12. Disabled external hyperlink emission in header/footer fragments where no dedicated part relationships are generated, falling back to plain themed text.
+13. Reused shared XML text sanitization for simple header/footer text fallback.
+14. Added chart `axId` references plus `autoTitleDeleted`/`plotVisOnly`/`dispBlanksAs` defaults for more stable Word chart parts.
+15. Replaced the remaining `TableReader` debug-log cleanup bare catch with a debug trace.
 
 ## P2
 

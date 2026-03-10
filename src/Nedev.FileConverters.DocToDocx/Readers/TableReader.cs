@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Nedev.FileConverters.DocToDocx.Models;
+using Nedev.FileConverters.DocToDocx.Utils;
 
 namespace Nedev.FileConverters.DocToDocx.Readers;
 
@@ -61,7 +62,8 @@ public class TableReader
 
     public void ParseTables(DocumentModel document)
     {
-        try { File.Delete(_debugLogPath); } catch { }
+        try { File.Delete(_debugLogPath); }
+        catch (Exception ex) { Logger.Debug($"Failed to delete table-reader debug log '{_debugLogPath}': {ex.Message}"); }
         Log("ParseTables START");
         var topLevelTables = new List<TableModel>();
         // Track all tables (including nested) to prevent duplicate additions

@@ -7,7 +7,7 @@ A DOC to DOCX converter for .NET 8.0 and .NET Standard 2.1 with no third-party r
 - **Binary DOC reader**: Reads compound file storage, FIB metadata, CLX/piece tables, FKPs, PLCFs, and related legacy Word structures.
 - **Rich text and paragraph formatting**: Preserves common character and paragraph properties including fonts, size, bold, italic, underline, colors, highlight, alignment, spacing, indentation, borders, shading, list formatting, and theme-backed hyperlink/comment/note colors.
 - **Tables**: Writes table width, indentation, spacing, borders, shading, header rows, cantSplit, vertical merges, horizontal merges, and nested table structures recovered from TAP/PAP data.
-- **Sections and page setup**: Emits page size, orientation, margins, page numbering, and first/odd/even header and footer parts.
+- **Sections and page setup**: Emits page size, orientation, margins, page numbering, and first/odd/even header and footer parts, with paragraph-based header/footer content now reusing document theme/style context while degrading unsupported external hyperlinks to plain text.
 - **Images and floating pictures**: Extracts embedded images and OfficeArt picture data, writes media parts, and emits inline or anchored drawings depending on available FSPA anchor information.
 - **Footnotes, endnotes, comments, textboxes, and equations**: Writes common annotation parts, textbox content, and Equation Editor content converted to OMML where recognized, now reusing the same run-property pipeline for theme-backed colors, highlight, underline, borders, and vertical alignment.
 - **Encrypted DOC support**: Supports XOR-obfuscated streams and Office 97-2003 RC4-encrypted DOC files when the correct password is supplied.
@@ -19,8 +19,8 @@ A DOC to DOCX converter for .NET 8.0 and .NET Standard 2.1 with no third-party r
 The converter is intentionally pragmatic: it aims to produce valid, readable DOCX output from a wide range of legacy DOC files, but it does not implement the full MS-DOC / OfficeArt feature surface.
 
 - **Complex vector shapes are downgraded**: Non-picture OfficeArt content and SmartArt-like shapes are currently written through simplified DrawingML fallback paths rather than full-fidelity shape reconstruction.
-- **Chart support is partial**: Embedded BIFF/OLE chart data is scanned on a best-effort basis. Category and value series can often be recovered, including simple `FORMULA`/`STRING` cells, stream-name hints for doughnut/radar charts, and single-series value-axis title inference, but chart formatting, axis details, legends, and many chart-specific options are still regenerated with minimal defaults.
-- **Theme interpretation is broader but still incomplete**: Theme colors and fonts now influence document defaults, runs, borders, shading, shapes, comments, footnotes, and endnotes, but not every output surface is fully theme-aware yet.
+- **Chart support is partial**: Embedded BIFF/OLE chart data is scanned on a best-effort basis. Category and value series can often be recovered, including simple `FORMULA`/`STRING` cells, stream-name hints for doughnut/radar charts, single-series value-axis title inference, and valid axis references/default display settings in generated OOXML, but chart formatting and many chart-specific options are still regenerated with minimal defaults.
+- **Theme interpretation is broader but still incomplete**: Theme colors and fonts now influence document defaults, runs, borders, shading, shapes, comments, footnotes, endnotes, and paragraph-based header/footer output, but not every output surface is fully theme-aware yet.
 - **Best-effort parsing still prefers partial output over hard failure**: Many OLE, chart, image, math, and binary parsing paths continue conversion after malformed or truncated input. Those paths now surface more structured warnings, and several former silent/developer-only fallbacks have been downgraded to debug traces or explicit warnings, but not every degraded recovery path is fully classified yet.
 - **Layout heuristics remain in a few areas**: Deeply nested tables, unusual merge layouts, and some header/footer or drawing placement cases may be approximated rather than reproduced exactly.
 - **Not a round-trip converter**: The goal is compatible DOCX output, not byte-for-byte structural equivalence with the source DOC.
@@ -38,7 +38,7 @@ The following areas are the main remaining implementation and maintenance hotspo
 
 ## Test coverage notes
 
-- **Covered today**: Package validation, sample conversion flows, selected chart heuristics, BIFF `FORMULA`/`STRING` recovery, OMML namespace generation, FIB regression cases, bookmark decoding, annotation/note writer formatting, and some encryption helper behavior.
+- **Covered today**: Package validation, sample conversion flows, selected chart heuristics, BIFF `FORMULA`/`STRING` recovery, chart axis/default XML emission, OMML namespace generation, FIB regression cases, bookmark decoding, annotation/note/header-footer writer formatting, and some encryption helper behavior.
 - **Still missing**: End-to-end encrypted DOC regression files, malformed document fuzzing, broad OLE/object-pool failure cases, and systematic compatibility suites for complex layout documents.
 
 ## Usage

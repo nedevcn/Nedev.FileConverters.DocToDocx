@@ -102,5 +102,28 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Contains("<c:holeSize val=\"50\"", xml);
             Assert.DoesNotContain("<c:legend>", xml);
         }
+
+        [Fact]
+        public void WriteChart_AxisBasedCharts_EmitAxisReferencesAndDisplayDefaults()
+        {
+            var model = new ChartModel
+            {
+                Type = ChartType.Column,
+                Categories = new List<string> { "A", "B" },
+                Series = { new ChartSeries { Name = "S", Values = new List<double> { 1, 2 } } }
+            };
+
+            using var ms = new MemoryStream();
+            using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer).WriteChart(model);
+            writer.Flush();
+            string xml = Encoding.UTF8.GetString(ms.ToArray());
+
+            Assert.Contains("<c:autoTitleDeleted val=\"1\"", xml);
+            Assert.Contains("<c:plotVisOnly val=\"1\"", xml);
+            Assert.Contains("<c:dispBlanksAs val=\"gap\"", xml);
+            Assert.True(xml.Split("<c:axId val=\"1\"", StringSplitOptions.None).Length >= 3);
+            Assert.True(xml.Split("<c:axId val=\"2\"", StringSplitOptions.None).Length >= 3);
+        }
     }
 }

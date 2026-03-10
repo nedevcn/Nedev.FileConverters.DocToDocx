@@ -43,6 +43,12 @@ public class ChartsWriter
         {
             WriteRichTextElement("title", chart.Title, cNs, aNs);
         }
+        else
+        {
+            _writer.WriteStartElement("c", "autoTitleDeleted", cNs);
+            _writer.WriteAttributeString("val", "1");
+            _writer.WriteEndElement();
+        }
 
         // Plot area with a single chart type. For most chart types we use a
         // simple category/value axis layout. Pie‑like charts do not require axes
@@ -58,6 +64,11 @@ public class ChartsWriter
         }
 
         WriteSeriesData(chart);
+
+        if (!isPie)
+        {
+            WriteAxisReferences(cNs);
+        }
 
         _writer.WriteEndElement(); // c:chartType
 
@@ -78,6 +89,14 @@ public class ChartsWriter
             _writer.WriteEndElement(); // c:legendPos
             _writer.WriteEndElement(); // c:legend
         }
+
+        _writer.WriteStartElement("c", "plotVisOnly", cNs);
+        _writer.WriteAttributeString("val", "1");
+        _writer.WriteEndElement();
+
+        _writer.WriteStartElement("c", "dispBlanksAs", cNs);
+        _writer.WriteAttributeString("val", "gap");
+        _writer.WriteEndElement();
 
         _writer.WriteEndElement(); // c:chart
         _writer.WriteEndElement(); // c:chartSpace
@@ -192,6 +211,17 @@ public class ChartsWriter
                 }
                 break;
         }
+    }
+
+    private void WriteAxisReferences(string cNs)
+    {
+        _writer.WriteStartElement("c", "axId", cNs);
+        _writer.WriteAttributeString("val", "1");
+        _writer.WriteEndElement();
+
+        _writer.WriteStartElement("c", "axId", cNs);
+        _writer.WriteAttributeString("val", "2");
+        _writer.WriteEndElement();
     }
 
     private void WriteRichTextElement(string elementName, string text, string cNs, string aNs)

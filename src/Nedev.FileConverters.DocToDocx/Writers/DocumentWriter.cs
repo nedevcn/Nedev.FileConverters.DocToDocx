@@ -55,6 +55,16 @@ public partial class DocumentWriter
         _writer = writer;
         _options = options ?? new DocumentWriterOptions();
     }
+
+    /// <summary>
+    /// Binds document-scoped context for fragment writers that reuse paragraph/run emission.
+    /// </summary>
+    internal DocumentWriter BindDocumentContext(DocumentModel document, DocumentRelationshipIds? relationshipIds = null)
+    {
+        _document = document;
+        _relationshipIds = relationshipIds;
+        return this;
+    }
     
 
     /// <summary>
