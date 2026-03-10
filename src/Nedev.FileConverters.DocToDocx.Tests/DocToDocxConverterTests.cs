@@ -92,6 +92,7 @@ public class DocToDocxConverterTests
             Assert.True(DocToDocxConverter.ValidatePackage(outputPath, out var validationError), validationError);
             Assert.Equal(outputPath, result.OutputPath);
             Assert.Empty(result.Warnings);
+            Assert.Empty(result.Diagnostics);
         }
         finally
         {
@@ -116,6 +117,38 @@ public class DocToDocxConverterTests
         Assert.Single(warnings);
         Assert.Contains("captured warning", warnings[0], StringComparison.Ordinal);
         Assert.DoesNotContain(warnings, warning => warning.Contains("outside scope", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Logger_BeginDiagnosticCapture_CapturesStructuredDiagnosticsWithinScopeOnly()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        using (Logger.BeginDiagnosticCapture(diagnostics))
+        {
+            Logger.Warning("captured diagnostic");
+        }
+
+        Logger.Warning("outside diagnostic scope");
+
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Equal(Logger.LogLevel.Warning, diagnostic.Level);
+        Assert.Equal("captured diagnostic", diagnostic.Message);
+        Assert.Contains("captured diagnostic", diagnostic.FormattedMessage, StringComparison.Ordinal);
+        Assert.Null(diagnostic.ExceptionType);
+        Assert.Null(diagnostic.ExceptionMessage);
+    }
+
+    [Fact]
+    public void ConversionResult_ConstructedFromWarnings_BackfillsDiagnostics()
+    {
+        var result = new ConversionResult("out.docx", new[] { "warning one" });
+
+        Assert.Single(result.Warnings);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(Logger.LogLevel.Warning, diagnostic.Level);
+        Assert.Equal("warning one", diagnostic.Message);
+        Assert.Equal("warning one", diagnostic.FormattedMessage);
     }
 
     [Fact]

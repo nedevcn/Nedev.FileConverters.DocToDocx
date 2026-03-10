@@ -13,6 +13,7 @@ This backlog turns the current audit findings into a practical implementation or
    - Goal: replace silent best-effort catches in high-value parsing paths with structured warnings.
    - Deliverables: consistent logging for OLE extraction, OfficeArt/image scanning, chart scanning, and optional stream recovery.
    - Exit criteria: partial conversion failures are visible in logs without aborting the full conversion.
+   - Status: partially completed. High-value parsing paths now emit structured warnings, and conversion APIs can return captured diagnostics. Remaining work is deeper coverage across the remaining silent/console-only paths.
 
 ## P1
 
@@ -44,3 +45,4 @@ This backlog turns the current audit findings into a practical implementation or
    - Goal: optionally surface accumulated non-fatal warnings through the public API instead of relying only on console/debug logging.
    - Deliverables: warning collection model or callback hook.
    - Exit criteria: callers can inspect conversion degradation programmatically.
+   - Status: completed in basic form. `ConvertWithWarnings` / `ConvertWithWarningsAsync` now return structured diagnostics plus backward-compatible warning strings.

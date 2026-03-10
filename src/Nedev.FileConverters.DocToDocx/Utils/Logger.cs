@@ -9,24 +9,26 @@ namespace Nedev.FileConverters.DocToDocx.Utils;
 /// </summary>
 public static class Logger
 {
-    private sealed class WarningCaptureScopeState
+    private sealed class CaptureScopeState
     {
-        public WarningCaptureScopeState(WarningCaptureScopeState? parent, ICollection<string> warnings)
+        public CaptureScopeState(CaptureScopeState? parent, ICollection<string>? warnings, ICollection<ConversionDiagnostic>? diagnostics)
         {
             Parent = parent;
             Warnings = warnings;
+            Diagnostics = diagnostics;
         }
 
-        public WarningCaptureScopeState? Parent { get; }
-        public ICollection<string> Warnings { get; }
+        public CaptureScopeState? Parent { get; }
+        public ICollection<string>? Warnings { get; }
+        public ICollection<ConversionDiagnostic>? Diagnostics { get; }
     }
 
-    private sealed class WarningCaptureScope : IDisposable
+    private sealed class CaptureScope : IDisposable
     {
-        private readonly WarningCaptureScopeState? _previous;
+        private readonly CaptureScopeState? _previous;
         private bool _disposed;
 
-        public WarningCaptureScope(WarningCaptureScopeState? previous)
+        public CaptureScope(CaptureScopeState? previous)
         {
             _previous = previous;
         }
@@ -36,12 +38,12 @@ public static class Logger
             if (_disposed)
                 return;
 
-            _warningCaptureState.Value = _previous;
+            _captureState.Value = _previous;
             _disposed = true;
         }
     }
 
-    private static readonly AsyncLocal<WarningCaptureScopeState?> _warningCaptureState = new();
+    private static readonly AsyncLocal<CaptureScopeState?> _captureState = new();
 
     /// <summary>
     /// Log level enumeration
@@ -78,9 +80,22 @@ public static class Logger
         if (warnings == null)
             throw new ArgumentNullException(nameof(warnings));
 
-        var previous = _warningCaptureState.Value;
-        _warningCaptureState.Value = new WarningCaptureScopeState(previous, warnings);
-        return new WarningCaptureScope(previous);
+        var previous = _captureState.Value;
+        _captureState.Value = new CaptureScopeState(previous, warnings, diagnostics: null);
+        return new CaptureScope(previous);
+    }
+
+    /// <summary>
+    /// Begins capturing warning-or-higher log messages as structured diagnostics for the current async flow.
+    /// </summary>
+    public static IDisposable BeginDiagnosticCapture(ICollection<ConversionDiagnostic> diagnostics)
+    {
+        if (diagnostics == null)
+            throw new ArgumentNullException(nameof(diagnostics));
+
+        var previous = _captureState.Value;
+        _captureState.Value = new CaptureScopeState(previous, warnings: null, diagnostics);
+        return new CaptureScope(previous);
     }
 
     /// <summary>
@@ -159,8 +174,16 @@ public static class Logger
 
         if (level >= LogLevel.Warning)
         {
-            var captureState = _warningCaptureState.Value;
-            captureState?.Warnings.Add(formattedMessage);
+            var timestamp = DateTime.UtcNow;
+            var captureState = _captureState.Value;
+            captureState?.Warnings?.Add(formattedMessage);
+            captureState?.Diagnostics?.Add(new ConversionDiagnostic(
+                timestamp,
+                level,
+                message,
+                formattedMessage,
+                exception?.GetType().Name,
+                exception?.Message));
         }
 
         if (CustomHandler != null)
@@ -197,6 +220,29 @@ public static class Logger
 
         return result;
     }
+}
+
+/// <summary>
+/// Structured non-fatal diagnostic captured during conversion.
+/// </summary>
+public sealed class ConversionDiagnostic
+{
+    public ConversionDiagnostic(DateTime timestampUtc, Logger.LogLevel level, string message, string formattedMessage, string? exceptionType, string? exceptionMessage)
+    {
+        TimestampUtc = timestampUtc;
+        Level = level;
+        Message = message ?? throw new ArgumentNullException(nameof(message));
+        FormattedMessage = formattedMessage ?? throw new ArgumentNullException(nameof(formattedMessage));
+        ExceptionType = exceptionType;
+        ExceptionMessage = exceptionMessage;
+    }
+
+    public DateTime TimestampUtc { get; }
+    public Logger.LogLevel Level { get; }
+    public string Message { get; }
+    public string FormattedMessage { get; }
+    public string? ExceptionType { get; }
+    public string? ExceptionMessage { get; }
 }
 
 /// <summary>

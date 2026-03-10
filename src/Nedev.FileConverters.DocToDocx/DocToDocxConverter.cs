@@ -130,13 +130,13 @@ public static class DocToDocxConverter
     /// </summary>
     public static ConversionResult ConvertWithWarnings(string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password, bool enableHyperlinks, CancellationToken cancellationToken)
     {
-        var warnings = new List<string>();
-        using (Logger.BeginWarningCapture(warnings))
+        var diagnostics = new List<ConversionDiagnostic>();
+        using (Logger.BeginDiagnosticCapture(diagnostics))
         {
             Convert(inputPath, outputPath, progress, password, enableHyperlinks, cancellationToken);
         }
 
-        return new ConversionResult(outputPath, warnings);
+        return new ConversionResult(outputPath, diagnostics);
     }
     
     /// <summary>
@@ -452,17 +452,27 @@ public class ConversionProgress
 }
 
 /// <summary>
-/// Represents the output path and captured non-fatal warnings for a conversion.
+/// Represents the output path and captured non-fatal diagnostics for a conversion.
 /// </summary>
 public sealed class ConversionResult
 {
+    public ConversionResult(string outputPath, IReadOnlyList<ConversionDiagnostic> diagnostics)
+    {
+        OutputPath = outputPath ?? throw new ArgumentNullException(nameof(outputPath));
+        Diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        Warnings = diagnostics.Select(static diagnostic => diagnostic.FormattedMessage).ToArray();
+    }
+
     public ConversionResult(string outputPath, IReadOnlyList<string> warnings)
     {
         OutputPath = outputPath ?? throw new ArgumentNullException(nameof(outputPath));
         Warnings = warnings ?? throw new ArgumentNullException(nameof(warnings));
+        Diagnostics = warnings.Select(static warning =>
+            new ConversionDiagnostic(DateTime.UtcNow, Logger.LogLevel.Warning, warning, warning, exceptionType: null, exceptionMessage: null)).ToArray();
     }
 
     public string OutputPath { get; }
+    public IReadOnlyList<ConversionDiagnostic> Diagnostics { get; }
     public IReadOnlyList<string> Warnings { get; }
 }
 
