@@ -1,6 +1,9 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using Nedev.FileConverters.DocToDocx.Utils;
 using Xunit;
 
@@ -107,6 +110,144 @@ namespace Nedev.FileConverters.DocToDocx.Tests
 
             Assert.Equal(plain.Length, read);
             Assert.Equal(plain, decrypted);
+        }
+
+        [Fact]
+        public void Rc4Stream_SeekIntoMiddleOfBlock_DecryptsRemainingBytes()
+        {
+            byte[] baseHash = { 0x21, 0x32, 0x43, 0x54 };
+            byte[] plain = new byte[1200];
+            new Random(789).NextBytes(plain);
+
+            byte[] encrypted = EncryptRc4Blocks(plain, baseHash);
+
+            using var ms = new MemoryStream(encrypted);
+            using var rc4 = new Rc4Stream(ms, baseHash, streamStartOffset: 0, useSha1: false, leaveOpen: true);
+
+            rc4.Seek(700, SeekOrigin.Begin);
+            byte[] actual = new byte[plain.Length - 700];
+            int read = 0;
+            while (read < actual.Length)
+            {
+                int chunk = rc4.Read(actual, read, Math.Min(73, actual.Length - read));
+                if (chunk == 0)
+                    break;
+
+                read += chunk;
+            }
+
+            Assert.Equal(actual.Length, read);
+
+            byte[] expected = new byte[plain.Length - 700];
+            Buffer.BlockCopy(plain, 700, expected, 0, expected.Length);
+            Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public void GetRc4BaseHash_BinaryRc4Header_ReturnsContextForValidPassword()
+        {
+            byte[] salt = { 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x11, 0x22, 0x33, 0x44, 0x88, 0x99, 0xAA, 0xBB };
+            byte[] verifier = { 0x01, 0x08, 0x02, 0x09, 0x03, 0x0A, 0x04, 0x0B, 0x05, 0x0C, 0x06, 0x0D, 0x07, 0x0E, 0x0F, 0x10 };
+            using var tableStream = BuildBinaryRc4EncryptionHeader("secret", salt, verifier);
+
+            var context = EncryptionHelper.GetRc4BaseHash(tableStream, lKey: 0, password: "secret");
+
+            Assert.NotNull(context);
+            Assert.False(context!.UseSha1);
+
+            byte[] expectedBaseKey;
+            using (var md5 = MD5.Create())
+            {
+                expectedBaseKey = md5.ComputeHash(Combine(Encoding.Unicode.GetBytes("secret"), salt));
+            }
+
+            Assert.Equal(expectedBaseKey, context.BaseKey);
+        }
+
+        [Fact]
+        public void GetRc4BaseHash_MalformedHeader_EmitsWarningAndReturnsNull()
+        {
+            using var tableStream = new MemoryStream(new byte[] { 0x01, 0x00, 0x01, 0x00, 0xAA });
+            var diagnostics = new List<ConversionDiagnostic>();
+
+            using (Logger.BeginDiagnosticCapture(diagnostics))
+            {
+                var context = EncryptionHelper.GetRc4BaseHash(tableStream, lKey: 0, password: "secret");
+                Assert.Null(context);
+            }
+
+            var diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(Logger.LogLevel.Warning, diagnostic.Level);
+            Assert.Contains("Failed to parse RC4 encryption header", diagnostic.Message, StringComparison.Ordinal);
+        }
+
+        private static byte[] EncryptRc4Blocks(byte[] plain, byte[] baseHash)
+        {
+            byte[] encrypted = new byte[plain.Length];
+            var cipher = new Rc4Cipher();
+
+            for (uint block = 0; block * 512 < plain.Length; block++)
+            {
+                byte[] blockBytes = BitConverter.GetBytes(block);
+                byte[] blockKey;
+                using (var md5 = MD5.Create())
+                {
+                    blockKey = md5.ComputeHash(Combine(baseHash, blockBytes));
+                }
+
+                cipher.Initialize(blockKey);
+
+                int offset = (int)(block * 512);
+                int length = Math.Min(512, plain.Length - offset);
+                cipher.TransformBlock(plain, offset, length, encrypted, offset);
+            }
+
+            return encrypted;
+        }
+
+        private static MemoryStream BuildBinaryRc4EncryptionHeader(string password, byte[] salt, byte[] verifier)
+        {
+            byte[] baseKey;
+            using (var md5 = MD5.Create())
+            {
+                baseKey = md5.ComputeHash(Combine(Encoding.Unicode.GetBytes(password), salt));
+            }
+
+            byte[] verifierHash;
+            using (var md5 = MD5.Create())
+            {
+                verifierHash = md5.ComputeHash(verifier);
+            }
+
+            var cipher = new Rc4Cipher();
+            cipher.Initialize(baseKey);
+
+            byte[] encryptedVerifier = new byte[16];
+            cipher.TransformBlock(verifier, 0, verifier.Length, encryptedVerifier, 0);
+
+            byte[] encryptedVerifierHash = new byte[16];
+            cipher.TransformBlock(verifierHash, 0, verifierHash.Length, encryptedVerifierHash, 0);
+
+            var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.Unicode, leaveOpen: true))
+            {
+                writer.Write((ushort)1);
+                writer.Write((ushort)1);
+                writer.Write(salt);
+                writer.Write(encryptedVerifier);
+                writer.Write(encryptedVerifierHash);
+            }
+
+            stream.Position = 0;
+            return stream;
+        }
+
+        private static byte[] Combine(byte[] left, byte[] right)
+        {
+            var combined = new byte[left.Length + right.Length];
+            Buffer.BlockCopy(left, 0, combined, 0, left.Length);
+            Buffer.BlockCopy(right, 0, combined, left.Length, right.Length);
+            return combined;
         }
     }
 }

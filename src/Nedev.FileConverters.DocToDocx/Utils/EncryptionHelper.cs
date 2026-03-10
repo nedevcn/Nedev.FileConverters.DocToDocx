@@ -124,6 +124,9 @@ public static class EncryptionHelper
                 byte[] encryptedVerifier = reader.ReadBytes(16);
                 byte[] encryptedVerifierHash = reader.ReadBytes(16);
 
+                if (salt.Length != 16 || encryptedVerifier.Length != 16 || encryptedVerifierHash.Length != 16)
+                    throw new InvalidDataException("Incomplete Binary RC4 encryption header.");
+
                 // Base key = MD5(password + salt)
                 byte[] passwordBytes = Encoding.Unicode.GetBytes(password);
                 byte[] passwordAndSalt = new byte[passwordBytes.Length + salt.Length];
@@ -186,6 +189,9 @@ public static class EncryptionHelper
                 uint verifierHashSize = reader.ReadUInt32();
                 byte[] encryptedVerifierHash = reader.ReadBytes(20);
 
+                if (saltSize != 16 || salt.Length != 16 || encryptedVerifier.Length != 16 || verifierHashSize == 0 || encryptedVerifierHash.Length != 20)
+                    throw new InvalidDataException("Incomplete CryptoAPI RC4 encryption header.");
+
                 // Hash(Salt + Password)
                 byte[] passwordBytes = Encoding.Unicode.GetBytes(password);
                 byte[] saltAndPassword = new byte[16 + passwordBytes.Length];
@@ -202,10 +208,12 @@ public static class EncryptionHelper
                 return new DecryptionContext { BaseKey = baseKey, UseSha1 = true };
             }
 
+            Logger.Warning($"Unsupported RC4 encryption header version {vMajor}.{vMinor}; unable to derive a decryption key.");
             return null;
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.Warning("Failed to parse RC4 encryption header; unable to derive a decryption key.", ex);
             return null;
         }
         finally

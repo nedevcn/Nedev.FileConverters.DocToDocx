@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Readers;
+using Nedev.FileConverters.DocToDocx.Utils;
 using Xunit;
 
 namespace Nedev.FileConverters.DocToDocx.Tests
@@ -294,6 +295,34 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Equal("Revenue", series.Name);
             Assert.Equal(new List<double> { 10d, 20d }, series.Values);
             Assert.Equal("Month", model.CategoryAxisTitle);
+        }
+
+        [Fact]
+        public void TryPopulateChart_MalformedSst_EmitsDiagnosticInsteadOfThrowing()
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, Encoding.Default, leaveOpen: true))
+            {
+                w.Write((ushort)0x0809);
+                w.Write((ushort)0);
+
+                w.Write((ushort)0x00FC);
+                w.Write((ushort)6);
+                w.Write((uint)1);
+                w.Write((ushort)1);
+            }
+
+            var model = new ChartModel { SourceBytes = ms.ToArray(), SourceStreamName = "BrokenChart" };
+            var diagnostics = new List<ConversionDiagnostic>();
+
+            using (Logger.BeginDiagnosticCapture(diagnostics))
+            {
+                BiffChartScanner.TryPopulateChart(model);
+            }
+
+            var diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(Logger.LogLevel.Warning, diagnostic.Level);
+            Assert.Contains("Failed to parse BIFF shared string table completely", diagnostic.Message, StringComparison.Ordinal);
         }
 
         [Theory]
