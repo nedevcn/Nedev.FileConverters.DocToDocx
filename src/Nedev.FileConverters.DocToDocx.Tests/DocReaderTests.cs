@@ -239,15 +239,44 @@ public class DocReaderTests
         var document = new DocumentModel();
         document.Paragraphs.Add(new ParagraphModel { Index = 0, Runs = { new RunModel { Text = "p0", CharacterPosition = 0, CharacterLength = 2 } } });
         document.Paragraphs.Add(new ParagraphModel { Index = 1, Runs = { new RunModel { Text = "p1", CharacterPosition = 20, CharacterLength = 2 } } });
-        document.Textboxes.Add(new TextboxModel { Index = 1 });
-        document.Textboxes.Add(new TextboxModel { Index = 2 });
+        document.Textboxes.Add(new TextboxModel { Index = 1, StoryStartCharacterPosition = 100 });
+        document.Textboxes.Add(new TextboxModel { Index = 2, StoryStartCharacterPosition = 200 });
 
-        DocReader.AttachTextboxAnchorHints(document, new[] { 5, 25 });
+        DocReader.AttachTextboxAnchorHints(document, new[]
+        {
+            new TextboxAnchorFieldInfo { FieldStartCharacterPosition = 5 },
+            new TextboxAnchorFieldInfo { FieldStartCharacterPosition = 25 }
+        });
 
         Assert.Equal(5, document.Textboxes[0].AnchorCharacterPosition);
         Assert.Equal(0, document.Textboxes[0].AnchorParagraphIndex);
         Assert.Equal(25, document.Textboxes[1].AnchorCharacterPosition);
         Assert.Equal(1, document.Textboxes[1].AnchorParagraphIndex);
+    }
+
+    [Fact]
+    public void BuildTextboxAnchorFields_GroupsFieldTripletsFromTextboxPlcPositions()
+    {
+        const string text = "\u0013 SHAPE \\* MERGEFORMAT \u0014Text box one\u0015 filler \u0013 SHAPE \u0014Text box two\u0015";
+        var plcPositions = new[]
+        {
+            text.IndexOf(FieldReader.FieldStartChar),
+            text.IndexOf(FieldReader.FieldSeparatorChar),
+            text.IndexOf(FieldReader.FieldEndChar),
+            text.LastIndexOf(FieldReader.FieldStartChar),
+            text.LastIndexOf(FieldReader.FieldSeparatorChar),
+            text.LastIndexOf(FieldReader.FieldEndChar)
+        };
+
+        var fields = DocReader.BuildTextboxAnchorFields(text, text.Length, plcPositions);
+
+        Assert.Equal(2, fields.Count);
+        Assert.Equal(plcPositions[0], fields[0].FieldStartCharacterPosition);
+        Assert.Equal(plcPositions[1], fields[0].FieldSeparatorCharacterPosition);
+        Assert.Equal(plcPositions[2], fields[0].FieldEndCharacterPosition);
+        Assert.Equal(plcPositions[3], fields[1].FieldStartCharacterPosition);
+        Assert.Equal(plcPositions[4], fields[1].FieldSeparatorCharacterPosition);
+        Assert.Equal(plcPositions[5], fields[1].FieldEndCharacterPosition);
     }
 
     private static void AddChpRange(Dictionary<int, ChpBase> map, int start, int end, int fontSize)

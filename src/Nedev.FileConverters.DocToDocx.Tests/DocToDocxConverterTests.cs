@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -266,6 +267,62 @@ public class DocToDocxConverterTests
         // diagnostics list may be empty when no warnings are generated, but it
         // should never be null.
         Assert.NotNull(result.Diagnostics);
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_RecoversRichLayoutContent()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var fullText = string.Concat(document.Paragraphs.SelectMany(paragraph => paragraph.Runs).Select(run => run.Text));
+
+        Assert.True(document.Paragraphs.Count >= 90);
+        Assert.True(document.Tables.Count >= 5);
+        Assert.True(document.Images.Count >= 2);
+        Assert.Contains("Text Formatting", fullText, StringComparison.Ordinal);
+        Assert.Contains("Inline formatting", fullText, StringComparison.Ordinal);
+        Assert.Contains("Footnotes", fullText, StringComparison.Ordinal);
+        Assert.Contains("Endnotes", fullText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_ProducesValidPackageAndStructuredDiagnostics()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            var result = DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            Assert.True(DocToDocxConverter.ValidatePackage(outputPath, out var validationError), validationError);
+            Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Failed to read SEPX", StringComparison.Ordinal));
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            using var reader = new StreamReader(archive.GetEntry("word/document.xml")!.Open());
+            var documentXml = reader.ReadToEnd();
+
+            Assert.Contains("Text Formatting", documentXml, StringComparison.Ordinal);
+            Assert.Contains("Inline formatting", documentXml, StringComparison.Ordinal);
+            Assert.Contains("Footnotes", documentXml, StringComparison.Ordinal);
+            Assert.Contains("Endnotes", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:pStyle w:val=\"Heading1\"", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:pStyle w:val=\"Heading2\"", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:vertAlign w:val=\"superscript\"", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:vertAlign w:val=\"subscript\"", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:u w:val=\"single\"", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:strike", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:tbl", documentXml, StringComparison.Ordinal);
+            Assert.Contains("w:drawing", documentXml, StringComparison.Ordinal);
+            Assert.DoesNotContain("\u0001", documentXml, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
     }
 
     [Fact]

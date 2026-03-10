@@ -23,6 +23,8 @@
 - OfficeArt/FSPA 已能恢复更多浮动对象锚点信息、环绕模式，并在部分自定义几何场景下把 wrap polygon 保留到输出模型。
 - 文本框读取链路已开始把 textbox story 与 textbox shape 元数据合并，能保留更多位置、尺寸、环绕与基础对齐信息。
 - 文本框匹配已不再只依赖简单顺序，开始结合主文档中的 textbox 锚点字段位置和段落提示来关联 textbox story 与 OfficeArt textbox shape。
+- textbox 锚点读取已进一步从单点 CP 提升为 field begin/separate/end 边界重建，后续可继续在此基础上细化 textbox 归属判定。
+- `samples/sample1.doc` 已纳入真实回归样本，当前覆盖加载、带 warning 的完整转换、标题/内联格式/表格/drawing 输出，以及 legacy field code 中非法 XML 控制字符的清洗。
 - BIFF 图表扫描除基础数据恢复外，已开始补充部分布局偏好，例如条形图轴位置和可推断的类目顺序方向。
 - 支持 XOR/RC4 相关加密读取路径，但还缺真实样本驱动的端到端回归验证。
 

@@ -1283,10 +1283,11 @@ public partial class DocumentWriter
                 // Run 2: instrText
                 if (!string.IsNullOrEmpty(run.FieldCode))
                 {
+                    var sanitizedFieldCode = SanitizeXmlString(run.FieldCode);
                     _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                     _writer.WriteStartElement("w", "instrText", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                     _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
-                    _writer.WriteString(run.FieldCode);
+                    _writer.WriteString(sanitizedFieldCode);
                     _writer.WriteEndElement();
                     _writer.WriteEndElement(); // w:r (instrText)
                 }

@@ -4,6 +4,14 @@ using Nedev.FileConverters.DocToDocx.Utils;
 
 namespace Nedev.FileConverters.DocToDocx.Readers;
 
+internal sealed class TextboxAnchorFieldInfo
+{
+    public int FieldStartCharacterPosition { get; set; }
+    public int? FieldSeparatorCharacterPosition { get; set; }
+    public int? FieldEndCharacterPosition { get; set; }
+    public int AnchorParagraphIndex { get; set; } = -1;
+}
+
 /// <summary>
 /// Main document reader that orchestrates all the sub-readers.
 /// 
@@ -346,7 +354,7 @@ public class DocReader : IDisposable
         if (_textboxReader != null)
         {
             Document.Textboxes = _textboxReader.ReadTextboxes();
-            AttachTextboxAnchorHints(Document, ReadTextboxAnchorCharacterPositions());
+            AttachTextboxAnchorHints(Document, ReadTextboxAnchorFields());
             MergeTextboxShapesIntoTextboxes(Document);
         }
 
@@ -433,9 +441,9 @@ public class DocReader : IDisposable
         document.Shapes.RemoveAll(shape => matchedShapeIds.Contains(shape.Id));
     }
 
-    internal static void AttachTextboxAnchorHints(DocumentModel document, IReadOnlyList<int> anchorCharacterPositions)
+    internal static void AttachTextboxAnchorHints(DocumentModel document, IReadOnlyList<TextboxAnchorFieldInfo> anchorFields)
     {
-        if (document.Textboxes.Count == 0 || anchorCharacterPositions.Count == 0 || document.Paragraphs.Count == 0)
+        if (document.Textboxes.Count == 0 || anchorFields.Count == 0 || document.Paragraphs.Count == 0)
             return;
 
         var paragraphsByCp = document.Paragraphs
@@ -451,33 +459,44 @@ public class DocReader : IDisposable
         if (paragraphsByCp.Count == 0)
             return;
 
-        int count = Math.Min(document.Textboxes.Count, anchorCharacterPositions.Count);
+        var orderedTextboxes = document.Textboxes
+            .OrderBy(textbox => textbox.StoryStartCharacterPosition)
+            .ThenBy(textbox => textbox.Index)
+            .ToList();
+
+        var orderedAnchorFields = anchorFields
+            .OrderBy(field => field.FieldStartCharacterPosition)
+            .ToList();
+
+        int count = Math.Min(orderedTextboxes.Count, orderedAnchorFields.Count);
         for (int i = 0; i < count; i++)
         {
-            int anchorCp = anchorCharacterPositions[i];
-            var textbox = document.Textboxes[i];
+            var anchorField = orderedAnchorFields[i];
+            int anchorCp = anchorField.FieldStartCharacterPosition;
+            var textbox = orderedTextboxes[i];
             textbox.AnchorCharacterPosition = anchorCp;
 
             var bestParagraph = paragraphsByCp.LastOrDefault(item => item.StartCp <= anchorCp) ?? paragraphsByCp[0];
             textbox.AnchorParagraphIndex = bestParagraph.Paragraph.Index;
+            anchorField.AnchorParagraphIndex = bestParagraph.Paragraph.Index;
         }
     }
 
-    private List<int> ReadTextboxAnchorCharacterPositions()
+    private List<TextboxAnchorFieldInfo> ReadTextboxAnchorFields()
     {
-        var anchorCharacterPositions = new List<int>();
+        var plcCharacterPositions = new List<int>();
         if (_fibReader == null || _tableReader == null || _textReader == null)
-            return anchorCharacterPositions;
+            return new List<TextboxAnchorFieldInfo>();
 
         if (_fibReader.FcPlcfFldTxbx == 0 || _fibReader.LcbPlcfFldTxbx < 10)
-            return anchorCharacterPositions;
+            return new List<TextboxAnchorFieldInfo>();
 
         try
         {
             _tableReader.BaseStream.Seek(_fibReader.FcPlcfFldTxbx, SeekOrigin.Begin);
             int n = (int)((_fibReader.LcbPlcfFldTxbx - 4) / 6);
             if (n <= 0)
-                return anchorCharacterPositions;
+                return new List<TextboxAnchorFieldInfo>();
 
             var cpArray = new int[n + 1];
             for (int i = 0; i <= n; i++)
@@ -495,18 +514,60 @@ public class DocReader : IDisposable
                 if (cp < 0 || cp >= _fibReader.CcpText || cp >= _textReader.Text.Length)
                     continue;
 
-                if (_textReader.Text[cp] == FieldReader.FieldStartChar)
-                {
-                    anchorCharacterPositions.Add(cp);
-                }
+                plcCharacterPositions.Add(cp);
             }
         }
         catch (Exception ex)
         {
-            Logger.Warning("Failed to read textbox anchor field positions; continuing with sequence-based textbox matching.", ex);
+            Logger.Warning("Failed to read textbox anchor field PLC; continuing with sequence-based textbox matching.", ex);
+            return new List<TextboxAnchorFieldInfo>();
         }
 
-        return anchorCharacterPositions;
+        var anchorFields = BuildTextboxAnchorFields(_textReader.Text, _fibReader.CcpText, plcCharacterPositions);
+        if (plcCharacterPositions.Count > 0 && anchorFields.Count == 0)
+        {
+            Logger.Warning("Textbox anchor field PLC was present but no complete textbox field boundaries could be reconstructed; continuing with sequence-based textbox matching.");
+        }
+
+        return anchorFields;
+    }
+
+    internal static List<TextboxAnchorFieldInfo> BuildTextboxAnchorFields(string text, int mainDocumentLength, IReadOnlyList<int> plcCharacterPositions)
+    {
+        var anchorFields = new List<TextboxAnchorFieldInfo>();
+        var openFields = new Stack<TextboxAnchorFieldInfo>();
+
+        foreach (int cp in plcCharacterPositions.Distinct().OrderBy(cp => cp))
+        {
+            if (cp < 0 || cp >= mainDocumentLength || cp >= text.Length)
+                continue;
+
+            switch (text[cp])
+            {
+                case FieldReader.FieldStartChar:
+                    openFields.Push(new TextboxAnchorFieldInfo { FieldStartCharacterPosition = cp });
+                    break;
+
+                case FieldReader.FieldSeparatorChar:
+                    if (openFields.Count > 0 && !openFields.Peek().FieldSeparatorCharacterPosition.HasValue)
+                    {
+                        openFields.Peek().FieldSeparatorCharacterPosition = cp;
+                    }
+                    break;
+
+                case FieldReader.FieldEndChar:
+                    if (openFields.Count > 0)
+                    {
+                        var field = openFields.Pop();
+                        field.FieldEndCharacterPosition = cp;
+                        anchorFields.Add(field);
+                    }
+                    break;
+            }
+        }
+
+        anchorFields.Sort((left, right) => left.FieldStartCharacterPosition.CompareTo(right.FieldStartCharacterPosition));
+        return anchorFields;
     }
 
     private static ShapeModel? FindBestTextboxShapeMatch(TextboxModel textbox, IReadOnlyList<ShapeModel> textboxShapes, ISet<int> matchedShapeIds)
