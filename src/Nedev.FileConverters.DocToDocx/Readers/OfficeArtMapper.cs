@@ -7,6 +7,8 @@ namespace Nedev.FileConverters.DocToDocx.Readers;
 /// Maps low-level Escher (OfficeArt) records into high-level ShapeModel instances.
 /// 当前阶段仅做基础形状发现和 Id 提取，后续阶段再补充锚点、图片和样式信息。
 /// </summary>
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Nedev.FileConverters.DocToDocx.Tests")]
+
 public static class OfficeArtMapper
 {
     // Escher record type constants (subset)
@@ -321,10 +323,10 @@ public static class OfficeArtMapper
         }
     }
 
-    private static void ParseSegments(byte[] data, ShapeModel shape)
+    internal static void ParseSegments(byte[] data, ShapeModel shape)
     {
         if (data.Length < 6) return;
-        
+
         int nElems = BitConverter.ToUInt16(data, 0);
         int cbElem = BitConverter.ToUInt16(data, 4); // usually 2 for segments
 
@@ -336,26 +338,46 @@ public static class OfficeArtMapper
             ushort code = BitConverter.ToUInt16(data, pos);
             pos += 2;
 
-            // MS-ODRAW 2.1.18: Table 33 - Shape Path Segment Codes
-            // Simplified mapping:
-            if (code >= 0x0000 && code <= 0x00A7) 
+            // MS-ODRAW 2.1.18: Table 33 – Shape Path Segment Codes.  The table is
+            // long and not all values are encountered in Word documents; we focus
+            // on the ones seen frequently.  Any code with the high bit (0x8000)
+            // set is treated as a close command, which simplifies a lot of cases.
+            // We also explicitly handle the "end" marker (0x00AA) that separates
+            // disjoint contours.
+            var segment = new ShapePathSegment { VertexIndex = vertexIdx };
+            switch (code)
             {
-                // This is a lineTo or moveTo depending on context
-                // But specifically for Word, segment info codes usually:
-                // 0x0001: lineto, 0x0003: moveto, 0x00BE: curveTo, 0x8000: close
-                
-                // Let's use a more robust logic if we find better documentation or samples.
-                // For now:
-                var segment = new ShapePathSegment { VertexIndex = vertexIdx };
-                if (code == 0x0001) { segment.Type = SegmentType.LineTo; vertexIdx += 1; }
-                else if (code == 0x0002) { segment.Type = SegmentType.CurveTo; vertexIdx += 3; }
-                else if (code == 0x0003) { segment.Type = SegmentType.MoveTo; vertexIdx += 1; }
-                else if (code == 0x2001) { segment.Type = SegmentType.Close; }
-                else if (code == 0x00AA) { segment.Type = SegmentType.End; }
-                else { segment.Type = SegmentType.LineTo; vertexIdx += 1; } // Fallback
-                
-                geom.Segments.Add(segment);
+                case 0x0003: // moveto
+                    segment.Type = SegmentType.MoveTo;
+                    vertexIdx += 1;
+                    break;
+                case 0x0001: // lineto
+                    segment.Type = SegmentType.LineTo;
+                    vertexIdx += 1;
+                    break;
+                case 0x0002: // curveTo variant
+                case 0x00BE:
+                    segment.Type = SegmentType.CurveTo;
+                    vertexIdx += 3;
+                    break;
+                case 0x00AA: // end-of-subpath marker
+                    segment.Type = SegmentType.End;
+                    break;
+                default:
+                    if ((code & 0x8000) != 0)
+                    {
+                        segment.Type = SegmentType.Close;
+                    }
+                    else
+                    {
+                        // unrecognised segment: safest to treat as a line so we at
+                        // least draw something instead of dropping the record
+                        segment.Type = SegmentType.LineTo;
+                        vertexIdx += 1;
+                    }
+                    break;
             }
+            geom.Segments.Add(segment);
         }
     }
 

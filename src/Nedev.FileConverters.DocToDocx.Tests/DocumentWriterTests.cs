@@ -1098,6 +1098,105 @@ namespace Nedev.FileConverters.DocToDocx.Tests
 
             Assert.Contains("xml:space=\"preserve\"", xml);
             Assert.Contains("> Box  text </w:t>", xml);
+        }
+
+        [Fact]
+        public void WriteDocument_CustomGeometry_MultiplePaths_RendersAllPaths()
+        {
+            var doc = new DocumentModel();
+            // create geometry with two disjoint rectangles (outer + inner hole)
+            var geom = new CustomGeometry
+            {
+                ViewLeft = 0,
+                ViewTop = 0,
+                ViewRight = 1000,
+                ViewBottom = 1000
+            };
+            // vertices for outer square
+            geom.Vertices.Add(new System.Drawing.Point(0, 0));
+            geom.Vertices.Add(new System.Drawing.Point(1000, 0));
+            geom.Vertices.Add(new System.Drawing.Point(1000, 1000));
+            geom.Vertices.Add(new System.Drawing.Point(0, 1000));
+            // vertices for inner square
+            geom.Vertices.Add(new System.Drawing.Point(250, 250));
+            geom.Vertices.Add(new System.Drawing.Point(750, 250));
+            geom.Vertices.Add(new System.Drawing.Point(750, 750));
+            geom.Vertices.Add(new System.Drawing.Point(250, 750));
+
+            // outer path
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.MoveTo, VertexIndex = 0 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 1 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 2 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 3 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.Close });
+            // separator
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.End });
+            // inner path
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.MoveTo, VertexIndex = 4 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 5 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 6 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.LineTo, VertexIndex = 7 });
+            geom.Segments.Add(new ShapePathSegment { Type = SegmentType.Close });
+
+            doc.Shapes.Add(new ShapeModel
+            {
+                Id = 1,
+                Type = ShapeType.Custom,
+                CustomGeometry = geom
+            });
+
+            // first, exercise the standalone DocumentWriter (faster) and verify
+            // the raw XML contains two paths
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                var dw = new DocumentWriter(writer);
+                dw.WriteDocument(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+            var pathCount = System.Text.RegularExpressions.Regex.Matches(xml, "<a:path").Count;
+            Assert.Equal(2, pathCount);
+            Assert.Contains("<a:close", xml); // ensure close tags were emitted
+
+            // now make sure the same geometry survives the full package writer
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(ms.ToArray()), System.IO.Compression.ZipArchiveMode.Read);
+                var docXml = new StreamReader(zip.GetEntry("word/document.xml").Open()).ReadToEnd();
+                var pathCount2 = System.Text.RegularExpressions.Regex.Matches(docXml, "<a:path").Count;
+                Assert.Equal(2, pathCount2);
+            }
+        }
+
+        [Fact]
+        public void OfficeArtMapper_ParseSegments_RecognizesCloseAndEnd()
+        {
+            var shape = new ShapeModel();
+            // construct a simple segments stream: 3 entries
+            // header: count=3, cbElem=2
+            var data = new byte[6 + 2 * 3];
+            BitConverter.GetBytes((ushort)3).CopyTo(data, 0);
+            BitConverter.GetBytes((ushort)2).CopyTo(data, 2);
+            // codes: line, close (high bit), end
+            BitConverter.GetBytes((ushort)0x0001).CopyTo(data, 6);
+            BitConverter.GetBytes((ushort)0x8000).CopyTo(data, 8);
+            BitConverter.GetBytes((ushort)0x00AA).CopyTo(data, 10);
+
+            OfficeArtMapper.ParseSegments(data, shape);
+            Assert.NotNull(shape.CustomGeometry);
+            var segments = shape.CustomGeometry!.Segments;
+            Assert.Equal(3, segments.Count);
+            Assert.Equal(SegmentType.LineTo, segments[0].Type);
+            Assert.Equal(SegmentType.Close, segments[1].Type);
+            Assert.Equal(SegmentType.End, segments[2].Type);
+        }
+
 
             using var reader = XmlReader.Create(new StringReader(xml.TrimStart('\uFEFF')));
             while (reader.Read()) { }

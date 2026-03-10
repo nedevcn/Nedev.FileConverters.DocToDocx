@@ -116,6 +116,15 @@ unit test suite (now 17/17 converter tests passing).
    - Deliverables: regression fixtures, synthetic truncation tests, and fuzz-style smoke coverage.
    - Exit criteria: parser failures become bounded and diagnosable rather than accidental.
 
+7. Vector shape fidelity
+   - Goal: reduce the need for simplified fallback rectangles by reconstructing
+     multi‑path OfficeArt and SmartArt geometry, respecting groups, gradients,
+     and other advanced DrawingML features.
+   - Deliverables: full custom geometry support, grouped shape output, and a
+     series of regression samples exercise common SmartArt shapes.
+   - Status: added support for multi-contour paths and improved segment parsing
+     (2026/03); further work remains.
+
 ## Nice-to-have
 
 7. Reader diagnostics surfacing

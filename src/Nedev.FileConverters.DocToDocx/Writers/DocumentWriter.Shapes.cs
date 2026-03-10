@@ -6,6 +6,11 @@ namespace Nedev.FileConverters.DocToDocx.Writers;
 
 /// <summary>
 /// DocumentWriter partial class — shape, vector, and floating picture writing methods.
+///
+/// Vector shape handling has been steadily improved.  Early versions collapsed
+/// all OfficeArt geometry into simple rectangles; later patches added custom
+/// geometry support.  The current implementation recognises multiple contours
+/// and honours "end" segments so that holes and disjoint paths are preserved.
 /// </summary>
 public partial class DocumentWriter
 {
@@ -270,6 +275,16 @@ public partial class DocumentWriter
     private void WriteCustomGeometry(CustomGeometry geom)
     {
         const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+
+        // The custom geometry fallback used by OfficeArt/SmartArt shapes can
+        // consist of multiple disjoint contours (paths). an \u2018End\u2019
+        // segment is emitted by the parser when a new contour begins; earlier
+        // versions naively wrote everything into a single <a:path>, which meant
+        // shapes with holes or multiple sub‑paths collapsed into one continuous
+        // outline.  This resulted in the "Complex vector shapes are downgraded"
+        // bullet in the README.  We now open a new <a:path> for each such segment
+        // and honour <a:close> segments correctly, which greatly improves the
+        // fidelity of many OfficeArt shapes.
         _writer.WriteStartElement("a", "custGeom", aNs);
         _writer.WriteStartElement("a", "avLst", aNs); _writer.WriteEndElement();
         _writer.WriteStartElement("a", "gdLst", aNs); _writer.WriteEndElement();
@@ -281,12 +296,27 @@ public partial class DocumentWriter
         _writer.WriteEndElement();
 
         _writer.WriteStartElement("a", "pathLst", aNs);
-        _writer.WriteStartElement("a", "path", aNs);
-        _writer.WriteAttributeString("w", Math.Max(1, geom.ViewRight - geom.ViewLeft).ToString());
-        _writer.WriteAttributeString("h", Math.Max(1, geom.ViewBottom - geom.ViewTop).ToString());
+
+        // Helper to start a fresh path (used when encountering End segments).
+        Action startPath = () =>
+        {
+            _writer.WriteStartElement("a", "path", aNs);
+            _writer.WriteAttributeString("w", Math.Max(1, geom.ViewRight - geom.ViewLeft).ToString());
+            _writer.WriteAttributeString("h", Math.Max(1, geom.ViewBottom - geom.ViewTop).ToString());
+        };
+
+        startPath();
 
         foreach (var segment in geom.Segments)
         {
+            if (segment.Type == SegmentType.End)
+            {
+                // finish current path and begin another one
+                _writer.WriteEndElement(); // a:path
+                startPath();
+                continue;
+            }
+
             switch (segment.Type)
             {
                 case SegmentType.MoveTo:
@@ -312,7 +342,9 @@ public partial class DocumentWriter
                     }
                     break;
                 case SegmentType.CurveTo:
-                    // Escher curves are usually 3 vertices (Bezier)
+                    // Escher curves are usually expressed as three vertices (cubic
+                    // Beziers).  If we don't have enough vertices we simply skip the
+                    // malformed segment rather than throwing.
                     if (segment.VertexIndex + 2 < geom.Vertices.Count)
                     {
                         _writer.WriteStartElement("a", "cubicBezTo", aNs);
@@ -332,7 +364,8 @@ public partial class DocumentWriter
                     break;
             }
         }
-        _writer.WriteEndElement(); // a:path
+
+        _writer.WriteEndElement(); // a:path (final path)
         _writer.WriteEndElement(); // a:pathLst
         _writer.WriteEndElement(); // a:custGeom
     }
