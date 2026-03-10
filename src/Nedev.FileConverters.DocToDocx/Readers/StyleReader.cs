@@ -212,7 +212,10 @@ public class StyleReader
         AddDefaultStyles();
 
         // Try to parse real styles from STSH
-        if (_fib.FcStshf == 0 || _fib.LcbStshf == 0)
+        // fcStshf is a stream offset and 0 is a valid location in the Table
+        // stream. sample1.doc stores STSH at offset 0, so only lcb==0 means
+        // the stylesheet is absent.
+        if (_fib.LcbStshf == 0)
         {
             return;
         }
@@ -252,13 +255,15 @@ public class StyleReader
         _tableReader.BaseStream.Seek(_fib.FcStshf, SeekOrigin.Begin);
         var endPos = _fib.FcStshf + _fib.LcbStshf;
 
-        // Read header
+        // STSH starts with cbStshi followed by the STSHI header. The rgstd
+        // array begins after the full STSHI payload, not immediately after
+        // cstd/cbSTDBaseInFile.
+        var cbStshi = _tableReader.ReadUInt16();
+        if (_tableReader.BaseStream.Position + 4 > endPos)
+            return;
+
         var cstd = _tableReader.ReadUInt16();
         var cbSTDBaseInFile = _tableReader.ReadUInt16();
-        var flags = _tableReader.ReadUInt16();
-        var stiMaxWhenSaved = _tableReader.ReadUInt16();
-        var istdMaxFixedWhenSaved = _tableReader.ReadUInt16();
-        var nVerBuiltInNamesWhenSaved = _tableReader.ReadUInt16();
 
         // If cstd has high bit set, read extended count
         if ((cstd & 0x8000) != 0)
@@ -267,22 +272,35 @@ public class StyleReader
             cstd = (ushort)((cstd & 0x7FFF) | (cstdExtended << 15));
         }
 
+        var stdArrayStart = _fib.FcStshf + 2L + cbStshi;
+        if (stdArrayStart < _tableReader.BaseStream.Position)
+            stdArrayStart = _tableReader.BaseStream.Position;
+        if (stdArrayStart > endPos)
+            return;
+
+        _tableReader.BaseStream.Seek(stdArrayStart, SeekOrigin.Begin);
+
         // Read each STD entry
         for (int i = 0; i < cstd && _tableReader.BaseStream.Position < endPos; i++)
         {
+            var stdStart = _tableReader.BaseStream.Position;
             try
             {
                 var style = ReadStd(i, cbSTDBaseInFile);
                 if (style != null)
                 {
                     // Replace or add style
-                    var existing = Styles.Styles.FirstOrDefault(s => s.StyleId == style.StyleId);
+                    var existing = Styles.Styles.FirstOrDefault(s => s.StyleId == style.StyleId && s.Type == style.Type);
                     if (existing != null)
                     {
                         Styles.Styles.Remove(existing);
                     }
                     Styles.Styles.Add(style);
                 }
+            }
+            catch (Exception ex) when (TrySkipMalformedStd(stdStart, endPos))
+            {
+                Logger.Warning($"Skipped malformed style definition at index {i}.", ex);
             }
             catch
             {
@@ -360,25 +378,7 @@ public class StyleReader
         var fSemiHidden = (word4 >> 9) & 0x01;
         var fLocked = (word4 >> 10) & 0x01;
 
-        // Read style name (XSTZ - counted string with null terminator)
-        var nameLength = _tableReader.ReadUInt16();
-        if (nameLength > 64) // Sanity check
-            nameLength = 64;
-
-        string styleName;
-        if (nameLength > 0)
-        {
-            var nameBytes = _tableReader.ReadBytes(nameLength * 2); // Unicode
-            styleName = Encoding.Unicode.GetString(nameBytes);
-        }
-        else
-        {
-            styleName = $"Style{index}";
-        }
-
-        // Skip null terminator if present
-        if (_tableReader.ReadByte() != 0)
-            _tableReader.BaseStream.Seek(-1, SeekOrigin.Current);
+        var styleName = ReadStyleName(index, sti, entryEnd);
 
         // Determine style type from sgc
         var styleType = sgc switch
@@ -408,7 +408,6 @@ public class StyleReader
         };
 
         var sprmParser = new SprmParser(_tableReader, 0);
-        var fkpParser = new FkpParser(null!, null!, _fib, null!);
 
         // Read properties (UPX)
         // For paragraph styles, first UPX is PAP, second is CHP
@@ -437,22 +436,15 @@ public class StyleReader
                         Array.Copy(grpprl, 2, papGrpprl, 0, cbUpx - 2);
                         var pap = new PapBase();
                         sprmParser.ApplyToPap(papGrpprl, pap);
-                        style.ParagraphProperties = fkpParser.ConvertToParagraphProperties(pap, Styles);
+                        style.ParagraphProperties = ConvertToParagraphProperties(pap);
                     }
                 }
-                else if (i == 1) // CHP UPX — per MS-DOC may start with 2-byte istd (char style ref); skip so grpprl is correct
+                else if (i == 1) // CHP UPX — some docs prefix it with a 2-byte char style ref, others do not
                 {
                     var chp = new ChpBase();
-                    byte[] chpGrpprl;
-                    if (cbUpx > 2)
-                    {
-                        chpGrpprl = new byte[cbUpx - 2];
-                        Array.Copy(grpprl, 2, chpGrpprl, 0, chpGrpprl.Length);
-                    }
-                    else
-                        chpGrpprl = grpprl;
+                    var chpGrpprl = GetParagraphStyleChpGrpprl(grpprl);
                     sprmParser.ApplyToChp(chpGrpprl, chp);
-                    style.RunProperties = fkpParser.ConvertToRunProperties(chp, Styles);
+                    style.RunProperties = ConvertToRunProperties(chp);
                 }
             }
             else if (styleType == StyleType.Character)
@@ -461,7 +453,7 @@ public class StyleReader
                 {
                     var chp = new ChpBase();
                     sprmParser.ApplyToChp(grpprl, chp);
-                    style.RunProperties = fkpParser.ConvertToRunProperties(chp, Styles);
+                    style.RunProperties = ConvertToRunProperties(chp);
                 }
             }
             else if (styleType == StyleType.Table)
@@ -476,19 +468,21 @@ public class StyleReader
                 {
                     var pap = new PapBase();
                     sprmParser.ApplyToPap(SkipStylePrefix(grpprl), pap);
-                    style.ParagraphProperties = fkpParser.ConvertToParagraphProperties(pap, Styles);
+                    style.ParagraphProperties = ConvertToParagraphProperties(pap);
                 }
                 else if (i == 2)
                 {
                     var chp = new ChpBase();
                     sprmParser.ApplyToChp(SkipStylePrefix(grpprl), chp);
-                    style.RunProperties = fkpParser.ConvertToRunProperties(chp, Styles);
+                    style.RunProperties = ConvertToRunProperties(chp);
                 }
             }
             
             _tableReader.BaseStream.Seek(upxEnd, SeekOrigin.Begin);
             if (cbUpx % 2 != 0) _tableReader.BaseStream.Seek(1, SeekOrigin.Current); // 2-byte alignment
         }
+
+        ApplyBuiltInStyleDefaults(style, sti);
 
         // Skip to end of entry
         _tableReader.BaseStream.Seek(entryEnd, SeekOrigin.Begin);
@@ -528,7 +522,7 @@ public class StyleReader
 
         visiting.Add(style.StyleId);
 
-        var baseStyle = GetStyle(style.BasedOn.Value);
+        var baseStyle = GetStyle(style.BasedOn.Value, style.Type) ?? GetStyle(style.BasedOn.Value);
         if (baseStyle != null)
         {
             // Ensure base style is resolved first
@@ -566,6 +560,224 @@ public class StyleReader
         var trimmed = new byte[grpprl.Length - 2];
         Array.Copy(grpprl, 2, trimmed, 0, trimmed.Length);
         return trimmed;
+    }
+
+    private static void ApplyBuiltInStyleDefaults(StyleDefinition style, int sti)
+    {
+        if (style.Type != StyleType.Paragraph)
+            return;
+
+        if (sti == 15 || string.Equals(style.Name, "Title", StringComparison.OrdinalIgnoreCase))
+        {
+            style.ParagraphProperties ??= new ParagraphProperties();
+            if (style.ParagraphProperties.Alignment == ParagraphAlignment.Left)
+                style.ParagraphProperties.Alignment = ParagraphAlignment.Center;
+
+            style.RunProperties ??= new RunProperties();
+            if (style.RunProperties.FontSize < 56)
+                style.RunProperties.FontSize = 56;
+            if (style.RunProperties.FontSizeCs < 56)
+                style.RunProperties.FontSizeCs = 56;
+            style.RunProperties.IsBold = true;
+            style.RunProperties.IsBoldCs = true;
+        }
+    }
+
+    private RunProperties ConvertToRunProperties(ChpBase chp)
+    {
+        var props = new RunProperties
+        {
+            FontIndex = chp.FontIndex,
+            FontSize = chp.FontSize,
+            FontSizeCs = chp.FontSizeCs,
+            IsBold = chp.IsBold,
+            IsBoldCs = chp.IsBoldCs,
+            IsItalic = chp.IsItalic,
+            IsItalicCs = chp.IsItalicCs,
+            IsUnderline = chp.IsUnderline,
+            UnderlineType = (UnderlineType)chp.Underline,
+            IsStrikeThrough = chp.IsStrikeThrough,
+            IsDoubleStrikeThrough = chp.IsDoubleStrikeThrough,
+            IsSmallCaps = chp.IsSmallCaps,
+            IsAllCaps = chp.IsAllCaps,
+            IsHidden = chp.IsHidden,
+            IsSuperscript = chp.IsSuperscript,
+            IsSubscript = chp.IsSubscript,
+            Color = chp.Color,
+            CharacterSpacingAdjustment = chp.CharacterSpacingAdjustment,
+            Language = chp.Language,
+            HighlightColor = chp.HighlightColor,
+            RgbColor = chp.RgbColor,
+            HasRgbColor = chp.HasRgbColor,
+            IsOutline = chp.IsOutline,
+            IsShadow = chp.IsShadow,
+            IsEmboss = chp.IsEmboss,
+            IsImprint = chp.IsImprint,
+            Border = chp.Border,
+            Kerning = chp.Kerning,
+            Position = chp.Position,
+            CharacterScale = chp.Scale,
+            EastAsianLayoutType = chp.EastAsianLayoutType,
+            IsEastAsianVertical = chp.IsEastAsianVertical,
+            IsEastAsianVerticalCompress = chp.IsEastAsianVerticalCompress,
+            IsDeleted = chp.IsDeleted,
+            IsInserted = chp.IsInserted,
+            AuthorIndexDel = chp.AuthorIndexDel,
+            AuthorIndexIns = chp.AuthorIndexIns,
+            DateDel = chp.DateDel,
+            DateIns = chp.DateIns
+        };
+
+        props.FontName = ResolveFontName(chp.FontIndex);
+
+        return props;
+    }
+
+    private string? ResolveFontName(int fontIndex)
+    {
+        if (fontIndex < 0 || fontIndex >= Styles.Fonts.Count)
+            return null;
+
+        var font = Styles.Fonts[fontIndex];
+        if (!string.IsNullOrWhiteSpace(font.Name) &&
+            !string.Equals(font.Name, $"Font{font.Index}", StringComparison.OrdinalIgnoreCase))
+        {
+            return font.Name;
+        }
+
+        return string.IsNullOrWhiteSpace(font.AltName) ? null : font.AltName;
+    }
+
+    private static ParagraphProperties ConvertToParagraphProperties(PapBase pap)
+    {
+        var styleIndex = pap.StyleId != 0 ? pap.StyleId : pap.Istd;
+        return new ParagraphProperties
+        {
+            StyleIndex = styleIndex,
+            Alignment = (ParagraphAlignment)pap.Justification,
+            IndentLeft = pap.IndentLeft,
+            IndentLeftChars = pap.IndentLeftChars,
+            IndentRight = pap.IndentRight,
+            IndentRightChars = pap.IndentRightChars,
+            IndentFirstLine = pap.IndentFirstLine,
+            IndentFirstLineChars = pap.IndentFirstLineChars,
+            SpaceBefore = pap.SpaceBefore,
+            SpaceAfter = pap.SpaceAfter,
+            LineSpacing = pap.LineSpacing,
+            LineSpacingMultiple = pap.LineSpacingMultiple,
+            KeepWithNext = pap.KeepWithNext,
+            KeepTogether = pap.KeepTogether,
+            PageBreakBefore = pap.PageBreakBefore,
+            ListFormatId = pap.ListFormatId,
+            ListLevel = pap.ListLevel,
+            OutlineLevel = pap.OutlineLevel,
+            Shading = pap.Shading
+        };
+    }
+
+    private string ReadStyleName(int index, int sti, long entryEnd)
+    {
+        if (_tableReader.BaseStream.Position + 2 > entryEnd)
+            return GetBuiltInStyleName(sti, index);
+
+        var nameLength = _tableReader.ReadUInt16();
+        if (nameLength > 256)
+            nameLength = 256;
+
+        var charsToRead = Math.Min((long)nameLength * 2, Math.Max(0, entryEnd - _tableReader.BaseStream.Position));
+        string styleName = string.Empty;
+        if (charsToRead > 0)
+        {
+            var nameBytes = _tableReader.ReadBytes((int)charsToRead);
+            styleName = Encoding.Unicode.GetString(nameBytes);
+            if (nameBytes.Length < nameLength * 2)
+                return FinalizeStyleName(styleName, sti, index);
+        }
+
+        // XSTZ uses a UTF-16 null terminator (2 bytes), not a single byte.
+        if (_tableReader.BaseStream.Position + 2 <= entryEnd)
+        {
+            var terminator = _tableReader.ReadUInt16();
+            if (terminator != 0)
+                _tableReader.BaseStream.Seek(-2, SeekOrigin.Current);
+        }
+
+        return FinalizeStyleName(styleName, sti, index);
+    }
+
+    private static string FinalizeStyleName(string? styleName, int sti, int index)
+    {
+        styleName = styleName?.TrimEnd('\0');
+        if (!string.IsNullOrWhiteSpace(styleName))
+            return styleName;
+
+        return GetBuiltInStyleName(sti, index);
+    }
+
+    private static string GetBuiltInStyleName(int sti, int index)
+    {
+        return sti switch
+        {
+            0 or 1 => "Normal",
+            2 => "heading 1",
+            3 => "heading 2",
+            4 => "heading 3",
+            5 => "heading 4",
+            6 => "heading 5",
+            7 => "heading 6",
+            8 => "heading 7",
+            9 => "heading 8",
+            10 => "heading 9",
+            15 => "Title",
+            16 => "Subtitle",
+            29 => "Header",
+            30 => "Footer",
+            _ => $"Style{index}"
+        };
+    }
+
+    private bool TrySkipMalformedStd(long stdStart, long endPos)
+    {
+        if (stdStart < 0 || stdStart + 2 > endPos)
+            return false;
+
+        _tableReader.BaseStream.Seek(stdStart, SeekOrigin.Begin);
+        var cbStd = _tableReader.ReadUInt16();
+        if (cbStd == 0)
+            return false;
+
+        var nextStd = stdStart + 2L + cbStd;
+        if (nextStd > endPos)
+            return false;
+
+        _tableReader.BaseStream.Seek(nextStd, SeekOrigin.Begin);
+        return true;
+    }
+
+    private static byte[] GetParagraphStyleChpGrpprl(byte[] grpprl)
+    {
+        if (grpprl.Length <= 2)
+            return grpprl;
+
+        if (LooksLikeCharacterSprm(grpprl, 0))
+            return grpprl;
+
+        if (LooksLikeCharacterSprm(grpprl, 2))
+            return SkipStylePrefix(grpprl);
+
+        return grpprl;
+    }
+
+    private static bool LooksLikeCharacterSprm(byte[] grpprl, int offset)
+    {
+        if (offset < 0 || offset + 2 > grpprl.Length)
+            return false;
+
+        var sprm = BinaryPrimitives.ReadUInt16LittleEndian(grpprl.AsSpan(offset));
+        var sgc = (sprm >> 10) & 0x07;
+        var spra = (sprm >> 13) & 0x07;
+
+        return sgc == 2 && spra <= 7 && sprm != 0;
     }
 
     private static TableProperties ConvertToTableProperties(TapBase tap)
@@ -650,9 +862,9 @@ public class StyleReader
     /// <summary>
     /// Gets style by ID.
     /// </summary>
-    public StyleDefinition? GetStyle(ushort styleId)
+    public StyleDefinition? GetStyle(ushort styleId, StyleType? type = null)
     {
-        return Styles.Styles.FirstOrDefault(s => s.StyleId == styleId);
+        return Styles.Styles.FirstOrDefault(s => s.StyleId == styleId && (!type.HasValue || s.Type == type.Value));
     }
 
     /// <summary>

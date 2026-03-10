@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Nedev.FileConverters.Core;
 using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Utils;
@@ -326,6 +327,451 @@ public class DocToDocxConverterTests
     }
 
     [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesInlineFormattingFirstLineCharsIndent()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraph = document
+                .Descendants(w + "p")
+                .FirstOrDefault(p => string.Concat(p.Descendants(w + "t").Select(t => (string?)t))
+                    .Contains("Here, we demonstrate various types of inline text formatting", StringComparison.Ordinal));
+
+            Assert.NotNull(paragraph);
+
+            var indent = paragraph!
+                .Element(w + "pPr")?
+                .Element(w + "ind");
+
+            Assert.NotNull(indent);
+            Assert.Equal("206", (string?)indent!.Attribute(w + "firstLineChars"));
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesStyledTextCharacterFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var paragraph = document.Paragraphs.First(p => p.Text.Contains("A paragraph with styled text:", StringComparison.Ordinal));
+        var subtle = Assert.Single(paragraph.Runs.Where(run => run.Text.Contains("subtle emphasis", StringComparison.Ordinal)));
+        var strong = Assert.Single(paragraph.Runs.Where(run => run.Text.Contains("strong text", StringComparison.Ordinal)));
+        var intense = Assert.Single(paragraph.Runs.Where(run => run.Text.Contains("intense emphasis", StringComparison.Ordinal)));
+
+        Assert.NotNull(subtle.Properties);
+        Assert.True(subtle.Properties!.IsItalic);
+        Assert.True(subtle.Properties.HasRgbColor);
+        Assert.Equal(0xBD814Fu, subtle.Properties.RgbColor);
+        Assert.Equal(24, subtle.Properties.FontSize);
+        Assert.Equal(24, subtle.Properties.FontSizeCs);
+
+        Assert.NotNull(strong.Properties);
+        Assert.True(strong.Properties!.IsBold);
+        Assert.Equal(24, strong.Properties.FontSize);
+        Assert.Equal(24, strong.Properties.FontSizeCs);
+
+        Assert.NotNull(intense.Properties);
+        Assert.True(intense.Properties!.IsBold);
+        Assert.True(intense.Properties.IsItalic);
+        Assert.True(intense.Properties.HasRgbColor);
+        Assert.Equal(0xBD814Fu, intense.Properties.RgbColor);
+        Assert.Equal(24, intense.Properties.FontSize);
+        Assert.Equal(24, intense.Properties.FontSizeCs);
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesStyledTextCharacterFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraph = document
+                .Descendants(w + "p")
+                .FirstOrDefault(p => string.Concat(p.Descendants(w + "t").Select(t => (string?)t))
+                    .Contains("A paragraph with styled text:", StringComparison.Ordinal));
+
+            Assert.NotNull(paragraph);
+
+            var subtle = FindRunByText(paragraph!, w, "subtle emphasis");
+            var strong = FindRunByText(paragraph!, w, "strong text");
+            var intense = FindRunByText(paragraph!, w, "intense emphasis");
+
+            AssertRunFormatting(subtle, w, expectBold: false, expectItalic: true, expectColor: true);
+            AssertRunFormatting(strong, w, expectBold: true, expectItalic: false, expectColor: false);
+            AssertRunFormatting(intense, w, expectBold: true, expectItalic: true, expectColor: true);
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesPrimaryHeadingFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var paragraph = document.Paragraphs.First(p => string.Equals(p.Text, "Text Formatting", StringComparison.Ordinal));
+
+        Assert.NotNull(paragraph.Properties);
+        Assert.Equal(ParagraphAlignment.Center, paragraph.Properties!.Alignment);
+
+        var run = Assert.Single(paragraph.Runs.Where(r => r.Text.Contains("Text Formatting", StringComparison.Ordinal)));
+        Assert.NotNull(run.Properties);
+        Assert.True(run.Properties!.IsBold);
+        Assert.True(run.Properties.HasRgbColor);
+        Assert.Equal(0xBD814Fu, run.Properties.RgbColor);
+        Assert.Equal(32, run.Properties.FontSize);
+        Assert.Equal(32, run.Properties.FontSizeCs);
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesPrimaryHeadingFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraph = document
+                .Descendants(w + "p")
+                .FirstOrDefault(p => string.Equals(string.Concat(p.Descendants(w + "t").Select(t => (string?)t)), "Text Formatting", StringComparison.Ordinal));
+
+            Assert.NotNull(paragraph);
+            Assert.Equal("center", (string?)paragraph!.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val"));
+
+            var run = FindRunByText(paragraph!, w, "Text Formatting");
+            var runProperties = run.Element(w + "rPr");
+            Assert.NotNull(runProperties);
+            Assert.NotNull(runProperties!.Element(w + "b"));
+            Assert.Equal("4F81BD", (string?)runProperties.Element(w + "color")?.Attribute(w + "val"));
+            Assert.Equal("32", (string?)runProperties.Element(w + "sz")?.Attribute(w + "val"));
+            Assert.Equal("32", (string?)runProperties.Element(w + "szCs")?.Attribute(w + "val"));
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesDocumentTitleStyle()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var paragraph = document.Paragraphs.First(p => string.Equals(p.Text, "Demonstration of DOCX support in calibre", StringComparison.Ordinal));
+
+        Assert.NotNull(paragraph.Properties);
+        var style = document.Styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == paragraph.Properties!.StyleIndex);
+        Assert.NotNull(style);
+        Assert.Equal("Title", style!.Name);
+        Assert.Equal(ParagraphAlignment.Center, paragraph.Properties.Alignment);
+        Assert.Equal("Ubuntu", style.RunProperties?.FontName);
+        Assert.Contains(paragraph.Runs, run => string.Equals(run.Properties?.FontName, "Ubuntu", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesDocumentTitleStyle()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            var styles = XDocument.Load(archive.GetEntry("word/styles.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraph = document
+                .Descendants(w + "p")
+                .FirstOrDefault(p => string.Equals(string.Concat(p.Descendants(w + "t").Select(t => (string?)t)), "Demonstration of DOCX support in calibre", StringComparison.Ordinal));
+
+            var titleStyle = styles
+                .Descendants(w + "style")
+                .FirstOrDefault(style => string.Equals((string?)style.Attribute(w + "styleId"), "Title", StringComparison.Ordinal));
+
+            Assert.NotNull(paragraph);
+            Assert.Equal("Title", (string?)paragraph!.Element(w + "pPr")?.Element(w + "pStyle")?.Attribute(w + "val"));
+            Assert.Equal("center", (string?)paragraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val"));
+            Assert.Equal("Ubuntu", (string?)paragraph.Descendants(w + "rFonts").FirstOrDefault()?.Attribute(w + "ascii"));
+            Assert.NotNull(titleStyle);
+            Assert.Equal("Ubuntu", (string?)titleStyle!.Descendants(w + "rFonts").FirstOrDefault()?.Attribute(w + "ascii"));
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesSimpleTableHeaderAndBodyRunFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var table = document.Tables.First(table => table.Rows.Count >= 2 && table.ColumnCount == 2 && string.Equals(table.Rows[0].Cells[0].Paragraphs[0].Text, "ITEM", StringComparison.Ordinal));
+
+        var headerRun = Assert.Single(table.Rows[0].Cells[0].Paragraphs[0].Runs.Where(run => string.Equals(run.Text, "ITEM", StringComparison.Ordinal)));
+        Assert.NotNull(headerRun.Properties);
+        Assert.True(headerRun.Properties!.IsBold);
+        Assert.True(headerRun.Properties.HasRgbColor);
+        Assert.Equal(0xFFFFFFu, headerRun.Properties.RgbColor);
+
+        var bodyRun = Assert.Single(table.Rows[1].Cells[0].Paragraphs[0].Runs.Where(run => string.Equals(run.Text, "Books", StringComparison.Ordinal)));
+        Assert.NotNull(bodyRun.Properties);
+        Assert.False(bodyRun.Properties!.IsBold);
+        Assert.False(bodyRun.Properties.HasRgbColor && bodyRun.Properties.RgbColor == 0xFFFFFFu);
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesSimpleTableHeaderBackground()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var table = document.Tables.First(table => table.Rows.Count >= 2 && table.ColumnCount == 2 && string.Equals(table.Rows[0].Cells[0].Paragraphs[0].Text, "ITEM", StringComparison.Ordinal));
+
+        Assert.All(table.Rows[0].Cells, cell =>
+        {
+            Assert.NotNull(cell.Properties);
+            Assert.NotNull(cell.Properties!.Shading);
+            Assert.NotEqual(0, cell.Properties.Shading!.BackgroundColor);
+        });
+
+        Assert.True(table.Rows[1].Cells.All(cell => cell.Properties?.Shading == null), "Body row should not inherit the header shading fallback.");
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesSimpleTableHeaderAndBodyRunFormatting()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var table = document
+                .Descendants(w + "tbl")
+                .First(tbl => string.Equals(string.Concat(tbl.Descendants(w + "t").Take(2).Select(t => (string?)t)), "ITEMNEEDED", StringComparison.Ordinal));
+
+            var rows = table.Elements(w + "tr").ToList();
+            Assert.True(rows.Count >= 2);
+
+            var headerRunProperties = rows[0]
+                .Elements(w + "tc")
+                .First()
+                .Descendants(w + "r")
+                .First()
+                .Element(w + "rPr");
+
+            Assert.NotNull(headerRunProperties);
+            Assert.NotNull(headerRunProperties!.Element(w + "b"));
+            Assert.Equal("FFFFFF", (string?)headerRunProperties.Element(w + "color")?.Attribute(w + "val"));
+
+            var bodyRunProperties = rows[1]
+                .Elements(w + "tc")
+                .First()
+                .Descendants(w + "r")
+                .First()
+                .Element(w + "rPr");
+
+            Assert.NotNull(bodyRunProperties);
+            Assert.Null(bodyRunProperties!.Element(w + "b"));
+            Assert.NotEqual("FFFFFF", (string?)bodyRunProperties.Element(w + "color")?.Attribute(w + "val"));
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_WritesSimpleTableHeaderShading()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var table = document
+                .Descendants(w + "tbl")
+                .First(tbl => string.Equals(string.Concat(tbl.Descendants(w + "t").Take(2).Select(t => (string?)t)), "ITEMNEEDED", StringComparison.Ordinal));
+
+            var headerCells = table.Elements(w + "tr").First().Elements(w + "tc").ToList();
+            Assert.NotEmpty(headerCells);
+
+            Assert.All(headerCells, cell =>
+            {
+                var shading = cell.Element(w + "tcPr")?.Element(w + "shd");
+                Assert.NotNull(shading);
+                Assert.NotEqual("FFFFFF", (string?)shading!.Attribute(w + "fill"));
+            });
+
+            var firstBodyCellShading = table
+                .Elements(w + "tr")
+                .Skip(1)
+                .First()
+                .Elements(w + "tc")
+                .First()
+                .Element(w + "tcPr")?
+                .Element(w + "shd");
+
+            Assert.Null(firstBodyCellShading);
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesDecember2007CalendarTableStructure()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var table = document.Tables.First(table =>
+            table.Rows.Count > 0 &&
+            table.Rows[0].Cells.Count > 0 &&
+            string.Equals(table.Rows[0].Cells[0].Paragraphs[0].Text, "December 2007", StringComparison.Ordinal));
+
+        Assert.Equal(13, table.ColumnCount);
+        Assert.Equal(13, table.RowCount);
+
+        var titleCell = Assert.Single(table.Rows[0].Cells);
+        Assert.Equal(13, titleCell.ColumnSpan);
+        Assert.Equal("December 2007", titleCell.Paragraphs[0].Text);
+
+        Assert.Equal(13, table.Rows[1].Cells.Count);
+        Assert.Equal(new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }, table.Rows[1].Cells.Where((_, index) => index % 2 == 0).Select(cell => cell.Paragraphs[0].Text));
+        Assert.All(table.Rows[1].Cells.Where((_, index) => index % 2 == 1), cell => Assert.True(string.IsNullOrEmpty(cell.Paragraphs[0].Text)));
+
+        Assert.Equal("1", table.Rows[2].Cells[12].Paragraphs[0].Text);
+        Assert.All(table.Rows[3].Cells, cell => Assert.True(string.IsNullOrEmpty(cell.Paragraphs[0].Text)));
+        Assert.Equal("30", table.Rows[12].Cells[0].Paragraphs[0].Text);
+        Assert.Equal("31", table.Rows[12].Cells[2].Paragraphs[0].Text);
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_WritesDecember2007CalendarWithMergedTitleRow()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var table = document
+                .Descendants(w + "tbl")
+                .First(tbl => string.Equals(string.Concat(tbl.Descendants(w + "t").Take(1).Select(t => (string?)t)), "December 2007", StringComparison.Ordinal));
+
+            Assert.Equal(13, table.Element(w + "tblGrid")!.Elements(w + "gridCol").Count());
+
+            var rows = table.Elements(w + "tr").ToList();
+            Assert.Equal(13, rows.Count);
+
+            var firstRowCells = rows[0].Elements(w + "tc").ToList();
+            var mergedTitleCell = Assert.Single(firstRowCells);
+            Assert.Equal("13", (string?)mergedTitleCell.Element(w + "tcPr")?.Element(w + "gridSpan")?.Attribute(w + "val"));
+            Assert.Equal("December 2007", string.Concat(mergedTitleCell.Descendants(w + "t").Select(t => (string?)t)));
+
+            Assert.Equal(13, rows[1].Elements(w + "tc").Count());
+
+            var headerTexts = rows[1]
+                .Elements(w + "tc")
+                .Where((_, index) => index % 2 == 0)
+                .Select(tc => string.Concat(tc.Descendants(w + "t").Select(t => (string?)t)))
+                .ToList();
+            Assert.Equal(new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }, headerTexts);
+
+            var firstWeekTexts = rows[2]
+                .Elements(w + "tc")
+                .Select(tc => string.Concat(tc.Descendants(w + "t").Select(t => (string?)t)))
+                .ToList();
+            Assert.Equal("1", firstWeekTexts[12]);
+
+            Assert.All(rows[3].Elements(w + "tc"), cell => Assert.Empty(string.Concat(cell.Descendants(w + "t").Select(t => (string?)t))));
+
+            var lastWeekTexts = rows[12]
+                .Elements(w + "tc")
+                .Select(tc => string.Concat(tc.Descendants(w + "t").Select(t => (string?)t)))
+                .ToList();
+            Assert.Equal("30", lastWeekTexts[0]);
+            Assert.Equal("31", lastWeekTexts[2]);
+
+            var structuralHeadingInTable = table
+                .Descendants(w + "t")
+                .Any(text => string.Equals((string?)text, "Structural Elements", StringComparison.Ordinal));
+            Assert.False(structuralHeadingInTable);
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
     public void Convert_ProgressEvent_FiresAtLeastOnce()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
@@ -436,6 +882,24 @@ public class DocToDocxConverterTests
     {
         if (File.Exists(path))
             File.Delete(path);
+    }
+
+    private static XElement FindRunByText(XElement paragraph, XNamespace w, string text)
+    {
+        return paragraph
+            .Elements(w + "r")
+            .First(run => string.Concat(run.Descendants(w + "t").Select(t => (string?)t)).Contains(text, StringComparison.Ordinal));
+    }
+
+    private static void AssertRunFormatting(XElement run, XNamespace w, bool expectBold, bool expectItalic, bool expectColor)
+    {
+        var runProperties = run.Element(w + "rPr");
+        Assert.NotNull(runProperties);
+
+        Assert.Equal(expectBold, runProperties!.Element(w + "b") != null);
+        Assert.Equal(expectItalic, runProperties.Element(w + "i") != null);
+        Assert.Equal(expectColor, runProperties.Element(w + "color") != null);
+        Assert.Null(runProperties.Element(w + "szCs"));
     }
 
     private sealed class ImmediateProgress<T> : IProgress<T>

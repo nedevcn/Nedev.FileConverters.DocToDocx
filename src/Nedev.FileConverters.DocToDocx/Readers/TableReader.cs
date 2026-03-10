@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -45,6 +46,7 @@ public class TableReader
     {
         public string Text { get; set; } = string.Empty;
         public ParagraphModel? SourceParagraph { get; set; }
+        public List<RunModel> SourceRuns { get; } = new();
     }
 
     private readonly BinaryReader _wordDocReader;
@@ -331,7 +333,127 @@ public class TableReader
             Log("ContainsNestedTables: true");
         }
 
+        ApplyFallbackHeaderShading(document);
+
         Log("ParseTables END");
+    }
+
+    private static void ApplyFallbackHeaderShading(DocumentModel document)
+    {
+        var fallbackShading = CreateFallbackHeaderShading(document.Theme);
+        if (fallbackShading == null)
+            return;
+
+        foreach (var table in document.Tables)
+        {
+            ApplyFallbackHeaderShading(table, fallbackShading);
+        }
+    }
+
+    private static void ApplyFallbackHeaderShading(TableModel table, ShadingInfo fallbackShading)
+    {
+        foreach (var row in table.Rows)
+        {
+            if (!NeedsFallbackHeaderShading(row))
+                continue;
+
+            foreach (var cell in row.Cells)
+            {
+                cell.Properties ??= new TableCellProperties();
+                cell.Properties.Shading ??= CloneShading(fallbackShading);
+            }
+        }
+
+        foreach (var row in table.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                foreach (var paragraph in cell.Paragraphs)
+                {
+                    if (paragraph.NestedTable != null)
+                    {
+                        ApplyFallbackHeaderShading(paragraph.NestedTable, fallbackShading);
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool NeedsFallbackHeaderShading(TableRowModel row)
+    {
+        if (row.Cells.Count == 0)
+            return false;
+
+        if (row.Cells.Any(CellHasExplicitShading))
+            return false;
+
+        int visibleRunCount = 0;
+        int whiteRunCount = 0;
+
+        foreach (var run in row.Cells
+            .SelectMany(cell => cell.Paragraphs)
+            .SelectMany(paragraph => paragraph.Runs)
+            .Where(run => !string.IsNullOrWhiteSpace(run.Text)))
+        {
+            visibleRunCount++;
+            if (IsWhiteRun(run))
+            {
+                whiteRunCount++;
+            }
+        }
+
+        if (visibleRunCount == 0)
+            return false;
+
+        return whiteRunCount == visibleRunCount;
+    }
+
+    private static bool CellHasExplicitShading(TableCellModel cell)
+    {
+        if (cell.Properties?.Shading != null)
+            return true;
+
+        return cell.Paragraphs.Any(paragraph => paragraph.Properties?.Shading != null);
+    }
+
+    private static bool IsWhiteRun(RunModel run)
+    {
+        var props = run.Properties;
+        if (props == null)
+            return false;
+
+        if (props.HasRgbColor)
+            return props.RgbColor == 0xFFFFFFu;
+
+        return props.Color == 8;
+    }
+
+    private static ShadingInfo? CreateFallbackHeaderShading(ThemeModel theme)
+    {
+        // Prefer the document theme accent so missing table-style fills still match
+        // the rest of the document palette when the binary source only preserves
+        // inverse-video text.
+        int backgroundColor = theme.ColorMap.ContainsKey("accent1")
+            ? 0x01000004
+            : 0x00BD814F;
+
+        return new ShadingInfo
+        {
+            Pattern = ShadingPattern.Clear,
+            PatternVal = "clear",
+            BackgroundColor = backgroundColor
+        };
+    }
+
+    private static ShadingInfo CloneShading(ShadingInfo shading)
+    {
+        return new ShadingInfo
+        {
+            Pattern = shading.Pattern,
+            PatternVal = shading.PatternVal,
+            ForegroundColor = shading.ForegroundColor,
+            BackgroundColor = shading.BackgroundColor
+        };
     }
 
     private static bool ContainsNestedTables(IEnumerable<TableModel> tables)
@@ -824,9 +946,7 @@ public class TableReader
         for (int paragraphIndex = 0; paragraphIndex < group.Count; paragraphIndex++)
         {
             var paragraph = group[paragraphIndex];
-            var rowCandidates = GetRowCandidates(paragraph)
-                .Select(cells => cells.Select(text => new RecoveredCell { Text = text, SourceParagraph = paragraph }).ToList())
-                .ToList();
+            var rowCandidates = BuildRecoveredCellRows(paragraph, GetRowCandidates(paragraph).ToList());
             if (rowCandidates.Count == 0)
                 continue;
 
@@ -891,7 +1011,11 @@ public class TableReader
                 paragraph.Properties.KeepWithNext = false;
             }
 
-            if (!string.IsNullOrEmpty(cellText))
+            if (recoveredCell.SourceRuns.Count > 0)
+            {
+                paragraph.Runs.AddRange(recoveredCell.SourceRuns.Select(CloneRecoveredRun));
+            }
+            else if (!string.IsNullOrEmpty(cellText))
             {
                 AddRecoveredRuns(paragraph, cellText, sourceParagraph?.Runs.FirstOrDefault()?.Properties);
             }
@@ -919,9 +1043,7 @@ public class TableReader
         if (ctx.CurrentCellParagraphs.Count > 0 || ctx.CellsInCurrentRow.Count > 0)
             return false;
 
-        var rowCandidates = GetRowCandidates(paragraph)
-            .Select(cells => cells.Select(text => new RecoveredCell { Text = text, SourceParagraph = paragraph }).ToList())
-            .ToList();
+        var rowCandidates = BuildRecoveredCellRows(paragraph, GetRowCandidates(paragraph).ToList());
 
         if (rowCandidates.Count == 0)
             return false;
@@ -964,7 +1086,14 @@ public class TableReader
 
         if (!string.IsNullOrEmpty(cellText))
         {
-            AddRecoveredRuns(paragraph, cellText, sourceParagraph?.Runs.FirstOrDefault()?.Properties);
+            if (recoveredCell.SourceRuns.Count > 0)
+            {
+                paragraph.Runs.AddRange(recoveredCell.SourceRuns.Select(CloneRecoveredRun));
+            }
+            else
+            {
+                AddRecoveredRuns(paragraph, cellText, sourceParagraph?.Runs.FirstOrDefault()?.Properties);
+            }
         }
 
         ApplyRecoveredParagraphFormatting(paragraph, cellText);
@@ -1014,6 +1143,111 @@ public class TableReader
         return text
             .Replace("\r", "\n")
             .Trim('\r', '\n', '\t', ' ');
+    }
+
+    private static List<RecoveredCell> BuildRecoveredCells(ParagraphModel paragraph, List<string> cells)
+    {
+        var recoveredCells = cells
+            .Select(text => new RecoveredCell { Text = text, SourceParagraph = paragraph })
+            .ToList();
+
+        if (paragraph.Runs.Count == 0)
+            return recoveredCells;
+
+        int runIndex = 0;
+        int runTextOffset = 0;
+
+        foreach (var cell in recoveredCells)
+        {
+            PopulateRecoveredCellRuns(cell, paragraph.Runs, ref runIndex, ref runTextOffset);
+        }
+
+        return recoveredCells;
+    }
+
+    private static List<List<RecoveredCell>> BuildRecoveredCellRows(ParagraphModel paragraph, List<List<string>> rowCandidates)
+    {
+        var recoveredRows = new List<List<RecoveredCell>>(rowCandidates.Count);
+        int runIndex = 0;
+        int runTextOffset = 0;
+
+        foreach (var rowCandidate in rowCandidates)
+        {
+            var recoveredCells = rowCandidate
+                .Select(text => new RecoveredCell { Text = text, SourceParagraph = paragraph })
+                .ToList();
+
+            foreach (var cell in recoveredCells)
+            {
+                PopulateRecoveredCellRuns(cell, paragraph.Runs, ref runIndex, ref runTextOffset);
+            }
+
+            recoveredRows.Add(recoveredCells);
+        }
+
+        return recoveredRows;
+    }
+
+    private static void PopulateRecoveredCellRuns(RecoveredCell recoveredCell, List<RunModel> sourceRuns, ref int runIndex, ref int runTextOffset)
+    {
+        var remainingText = recoveredCell.Text.Trim();
+        if (string.IsNullOrEmpty(remainingText))
+            return;
+
+        while (runIndex < sourceRuns.Count && remainingText.Length > 0)
+        {
+            var sourceRun = sourceRuns[runIndex];
+            var sourceText = sourceRun.Text ?? string.Empty;
+
+            if (runTextOffset >= sourceText.Length)
+            {
+                runIndex++;
+                runTextOffset = 0;
+                continue;
+            }
+
+            var availableText = sourceText[runTextOffset..];
+            if (availableText.Length == 0)
+            {
+                runIndex++;
+                runTextOffset = 0;
+                continue;
+            }
+
+            int commonPrefixLength = GetSharedPrefixLength(availableText, remainingText);
+            if (commonPrefixLength == 0)
+            {
+                if (char.IsWhiteSpace(availableText[0]) || availableText[0] == '\x07')
+                {
+                    runTextOffset++;
+                    continue;
+                }
+
+                break;
+            }
+
+            recoveredCell.SourceRuns.Add(CloneRecoveredRunSegment(sourceRun, runTextOffset, commonPrefixLength));
+            runTextOffset += commonPrefixLength;
+            remainingText = remainingText[commonPrefixLength..];
+
+            if (runTextOffset >= sourceText.Length)
+            {
+                runIndex++;
+                runTextOffset = 0;
+            }
+        }
+    }
+
+    private static int GetSharedPrefixLength(string availableText, string expectedText)
+    {
+        int maxLength = Math.Min(availableText.Length, expectedText.Length);
+        int index = 0;
+        while (index < maxLength && availableText[index] == expectedText[index])
+        {
+            index++;
+        }
+
+        return index;
     }
 
     private static bool LooksLikeMetadataCell(string text)
@@ -1181,6 +1415,46 @@ public class TableReader
         });
     }
 
+    private static RunModel CloneRecoveredRun(RunModel source)
+    {
+        return new RunModel
+        {
+            Text = source.Text,
+            CharacterPosition = source.CharacterPosition,
+            CharacterLength = source.CharacterLength,
+            IsPicture = source.IsPicture,
+            ImageIndex = source.ImageIndex,
+            FcPic = source.FcPic,
+            IsField = source.IsField,
+            FieldCode = source.FieldCode,
+            IsHyperlink = source.IsHyperlink,
+            HyperlinkUrl = source.HyperlinkUrl,
+            HyperlinkBookmark = source.HyperlinkBookmark,
+            HyperlinkRelationshipId = source.HyperlinkRelationshipId,
+            IsBookmark = source.IsBookmark,
+            BookmarkName = source.BookmarkName,
+            IsBookmarkStart = source.IsBookmarkStart,
+            IsOle = source.IsOle,
+            OleObjectId = source.OleObjectId,
+            OleProgId = source.OleProgId,
+            ImageRelationshipId = source.ImageRelationshipId,
+            CropTop = source.CropTop,
+            CropBottom = source.CropBottom,
+            CropLeft = source.CropLeft,
+            CropRight = source.CropRight,
+            Properties = CloneRunProperties(source.Properties)
+        };
+    }
+
+    private static RunModel CloneRecoveredRunSegment(RunModel source, int textOffset, int textLength)
+    {
+        var clone = CloneRecoveredRun(source);
+        clone.Text = (source.Text ?? string.Empty).Substring(textOffset, textLength);
+        clone.CharacterPosition = source.CharacterPosition + textOffset;
+        clone.CharacterLength = textLength;
+        return clone;
+    }
+
     private static void ApplyRecoveredParagraphFormatting(ParagraphModel paragraph, string text)
     {
         if (!LooksLikeArticleHeading(text))
@@ -1214,8 +1488,11 @@ public class TableReader
             StyleIndex = source.StyleIndex,
             Alignment = source.Alignment,
             IndentLeft = source.IndentLeft,
+            IndentLeftChars = source.IndentLeftChars,
             IndentRight = source.IndentRight,
+            IndentRightChars = source.IndentRightChars,
             IndentFirstLine = source.IndentFirstLine,
+            IndentFirstLineChars = source.IndentFirstLineChars,
             SpaceBefore = source.SpaceBefore,
             SpaceAfter = source.SpaceAfter,
             LineSpacing = source.LineSpacing,
@@ -1405,7 +1682,33 @@ public class TableReader
         var table = ctx.Table;
         if (table.Rows.Count == 0) return;
 
+        var effectiveRowTaps = new List<TapBase?>(ctx.RowTaps);
+        int? rebuiltEndParagraphIndex = null;
+        int tapColumnCount = effectiveRowTaps
+            .Select(tap => tap?.CellWidths?.Length ?? 0)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        if (tapColumnCount < 2)
+        {
+            tapColumnCount = InferSequentialSingleCellColumnCount(table);
+        }
+
+        if (TryRebuildCalendarMonthTable(table, effectiveRowTaps, tapColumnCount, out var rebuiltCalendarRowTaps, out var calendarEndParagraphIndex))
+        {
+            effectiveRowTaps = rebuiltCalendarRowTaps;
+            rebuiltEndParagraphIndex = calendarEndParagraphIndex;
+        }
+        else if (TryRebuildSequentialSingleCellTable(table, effectiveRowTaps, tapColumnCount, out var rebuiltRowTaps))
+        {
+            effectiveRowTaps = rebuiltRowTaps;
+        }
+
         table.EndParagraphIndex = ctx.LastTableParagraphIndex;
+        if (rebuiltEndParagraphIndex.HasValue)
+        {
+            table.EndParagraphIndex = Math.Min(table.EndParagraphIndex, rebuiltEndParagraphIndex.Value);
+        }
         if (table.EndParagraphIndex < table.StartParagraphIndex)
         {
             table.EndParagraphIndex = Math.Max(table.StartParagraphIndex + 1, 1);
@@ -1418,7 +1721,9 @@ public class TableReader
             table.Rows = table.Rows.Take(MaxRowsPerTable).ToList();
             table.RowCount = table.Rows.Count;
         }
-        table.ColumnCount = table.Rows.Max(r => r.Cells.Count);
+        table.ColumnCount = Math.Max(
+            table.Rows.Max(r => r.Cells.Select(cell => cell.ColumnIndex + Math.Max(1, cell.ColumnSpan)).DefaultIfEmpty(r.Cells.Count).Max()),
+            tapColumnCount);
 
         // Fix cell indices - ensure RowIndex and ColumnIndex are correct
         for (int rowIdx = 0; rowIdx < table.Rows.Count; rowIdx++)
@@ -1437,7 +1742,7 @@ public class TableReader
         // Only set header row when the TAP data explicitly flags it.
         // Do NOT force all first rows to be headers — that's wrong for most tables.
         var firstRow = table.Rows.FirstOrDefault();
-        var firstTap = ctx.RowTaps.Count > 0 ? ctx.RowTaps[0] : null;
+        var firstTap = effectiveRowTaps.Count > 0 ? effectiveRowTaps[0] : null;
         if (firstRow != null && firstTap != null && firstTap.IsHeaderRow)
         {
             firstRow.Properties ??= new TableRowProperties();
@@ -1445,7 +1750,7 @@ public class TableReader
         }
 
         // Apply Spans
-        bool hasTapMergeInfo = ctx.RowTaps.Any(t => t?.CellMerges != null);
+        bool hasTapMergeInfo = effectiveRowTaps.Any(t => t?.CellMerges != null);
         if (hasTapMergeInfo && table.ColumnCount > 0)
         {
             for (int col = 0; col < table.ColumnCount; col++)
@@ -1456,7 +1761,7 @@ public class TableReader
                     var startCell = GetCell(table, row, col);
                     if (startCell == null) { row++; continue; }
 
-                    var tap = row < ctx.RowTaps.Count ? ctx.RowTaps[row] : null;
+                    var tap = row < effectiveRowTaps.Count ? effectiveRowTaps[row] : null;
                     var flags = tap?.CellMerges != null && col < tap.CellMerges.Length ? tap.CellMerges[col] : null;
                     if (flags == null || !flags.VertFirst) { row++; continue; }
 
@@ -1464,7 +1769,7 @@ public class TableReader
                     int nextRow = row + 1;
                     while (nextRow < table.Rows.Count)
                     {
-                        var nextTap = nextRow < ctx.RowTaps.Count ? ctx.RowTaps[nextRow] : null;
+                        var nextTap = nextRow < effectiveRowTaps.Count ? effectiveRowTaps[nextRow] : null;
                         var nextFlags = nextTap?.CellMerges != null && col < nextTap.CellMerges.Length ? nextTap.CellMerges[col] : null;
                         if (nextFlags == null || !nextFlags.VertMerged) break;
                         span++;
@@ -1478,7 +1783,7 @@ public class TableReader
 
             for (int row = 0; row < table.Rows.Count; row++)
             {
-                var tap = row < ctx.RowTaps.Count ? ctx.RowTaps[row] : null;
+                var tap = row < effectiveRowTaps.Count ? effectiveRowTaps[row] : null;
                 var mergeArray = tap?.CellMerges;
                 if (mergeArray == null || mergeArray.Length == 0) continue;
 
@@ -1533,6 +1838,316 @@ public class TableReader
             }
         }
         Log($"FinalizeTable DONE level={ctx.Level} rows={table.RowCount} cols={table.ColumnCount}");
+    }
+
+    private static bool TryRebuildCalendarMonthTable(
+        TableModel table,
+        List<TapBase?> rowTaps,
+        int tapColumnCount,
+        out List<TapBase?> rebuiltRowTaps,
+        out int? rebuiltEndParagraphIndex)
+    {
+        rebuiltRowTaps = rowTaps;
+        rebuiltEndParagraphIndex = null;
+
+        if (tapColumnCount != 13 || table.Rows.Count < 39 || table.Rows.Any(row => row.Cells.Count != 1))
+            return false;
+
+        var flattenedCells = table.Rows.Select(row => row.Cells[0]).ToList();
+        var texts = flattenedCells
+            .Select(cell => cell.Paragraphs.FirstOrDefault()?.Text?.Trim() ?? string.Empty)
+            .ToList();
+
+        if (!TryParseMonthYear(texts.FirstOrDefault(), out int month, out int year))
+            return false;
+
+        string[] expectedDays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        if (texts.Count < 8 || !texts.Skip(1).Take(expectedDays.Length).SequenceEqual(expectedDays, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        int daysInMonth = DateTime.DaysInMonth(year, month);
+        int requiredCells = 1 + expectedDays.Length + daysInMonth;
+        if (flattenedCells.Count < requiredCells)
+            return false;
+
+        var dateTexts = texts.Skip(1 + expectedDays.Length).Take(daysInMonth).ToList();
+        if (!dateTexts.Select((text, index) => string.Equals(text, (index + 1).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)).All(match => match))
+            return false;
+
+        var rebuiltRows = new List<TableRowModel>();
+        var effectiveTaps = new List<TapBase?>();
+
+        var titleCell = flattenedCells[0];
+        ConfigureRebuiltCell(titleCell, rowTaps.ElementAtOrDefault(0), 0, tapColumnCount);
+        titleCell.ColumnSpan = tapColumnCount;
+        rebuiltRows.Add(new TableRowModel
+        {
+            Index = 0,
+            Properties = table.Rows[0].Properties,
+            Cells = new List<TableCellModel> { titleCell }
+        });
+        effectiveTaps.Add(rowTaps.ElementAtOrDefault(0));
+
+        var headerRow = CreateCalendarRow(1, rowTaps.ElementAtOrDefault(1));
+        for (int dayIndex = 0; dayIndex < expectedDays.Length; dayIndex++)
+        {
+            int cellIndex = 1 + dayIndex;
+            int columnIndex = dayIndex * 2;
+            var headerCell = flattenedCells[cellIndex];
+            ConfigureRebuiltCell(headerCell, rowTaps.ElementAtOrDefault(cellIndex), columnIndex, 1);
+            headerRow.Cells[columnIndex] = headerCell;
+        }
+        rebuiltRows.Add(headerRow);
+        effectiveTaps.Add(rowTaps.ElementAtOrDefault(1));
+
+        int firstDayOfWeek = (int)new DateTime(year, month, 1).DayOfWeek;
+        int dateStartIndex = 1 + expectedDays.Length;
+        for (int weekIndex = 0; weekIndex < 6; weekIndex++)
+        {
+            int dateRowIndex = 2 + (weekIndex * 2);
+            var dateRowTap = rowTaps.ElementAtOrDefault(Math.Min(dateStartIndex + (weekIndex * 7), rowTaps.Count - 1));
+            var dateRow = CreateCalendarRow(dateRowIndex, dateRowTap);
+
+            rebuiltRows.Add(dateRow);
+            effectiveTaps.Add(dateRowTap);
+
+            if (dateRowIndex < 12)
+            {
+                rebuiltRows.Add(CreateCalendarRow(dateRowIndex + 1, dateRowTap));
+                effectiveTaps.Add(dateRowTap);
+            }
+        }
+
+        for (int day = 1; day <= daysInMonth; day++)
+        {
+            int weekIndex = (firstDayOfWeek + day - 1) / 7;
+            int dayOfWeekIndex = (firstDayOfWeek + day - 1) % 7;
+            int rowIndex = 2 + (weekIndex * 2);
+            int columnIndex = dayOfWeekIndex * 2;
+            int sourceCellIndex = dateStartIndex + (day - 1);
+
+            var dateCell = flattenedCells[sourceCellIndex];
+            ConfigureRebuiltCell(dateCell, rowTaps.ElementAtOrDefault(sourceCellIndex), columnIndex, 1);
+            rebuiltRows[rowIndex].Cells[columnIndex] = dateCell;
+        }
+
+        table.Rows = rebuiltRows;
+        rebuiltRowTaps = effectiveTaps;
+        rebuiltEndParagraphIndex = flattenedCells
+            .Take(requiredCells)
+            .SelectMany(cell => cell.Paragraphs)
+            .Select(paragraph => paragraph.Index)
+            .DefaultIfEmpty(table.EndParagraphIndex)
+            .Max();
+        return true;
+    }
+
+    private static bool TryRebuildSequentialSingleCellTable(
+        TableModel table,
+        List<TapBase?> rowTaps,
+        int tapColumnCount,
+        out List<TapBase?> rebuiltRowTaps)
+    {
+        rebuiltRowTaps = rowTaps;
+
+        if (tapColumnCount < 2 || table.Rows.Count <= tapColumnCount)
+            return false;
+
+        if (table.Rows.Any(row => row.Cells.Count != 1))
+            return false;
+
+        var flattenedCells = table.Rows.Select(row => row.Cells[0]).ToList();
+        if (flattenedCells.Count <= tapColumnCount)
+            return false;
+
+        int leadingSpan = GetLeadingHorizontalSpan(rowTaps.FirstOrDefault(), tapColumnCount);
+        bool hasMergedLeadingCell = leadingSpan == tapColumnCount && flattenedCells.Count > tapColumnCount;
+        if (!hasMergedLeadingCell && LooksLikeMergedCalendarTitle(flattenedCells, tapColumnCount))
+        {
+            hasMergedLeadingCell = true;
+        }
+
+        var rebuiltRows = new List<TableRowModel>();
+        var effectiveTaps = new List<TapBase?>();
+        int cellCursor = 0;
+
+        if (hasMergedLeadingCell)
+        {
+            var titleTap = rowTaps[0];
+            var titleCell = flattenedCells[0];
+            ConfigureRebuiltCell(titleCell, titleTap, 0, tapColumnCount);
+            titleCell.ColumnSpan = tapColumnCount;
+
+            rebuiltRows.Add(new TableRowModel
+            {
+                Index = 0,
+                Properties = table.Rows[0].Properties,
+                Cells = new List<TableCellModel> { titleCell }
+            });
+            effectiveTaps.Add(titleTap);
+            cellCursor = 1;
+        }
+
+        while (cellCursor < flattenedCells.Count)
+        {
+            int logicalRowIndex = rebuiltRows.Count;
+            int sourceRowIndex = Math.Min(cellCursor, table.Rows.Count - 1);
+            var rowTap = sourceRowIndex < rowTaps.Count ? rowTaps[sourceRowIndex] : rowTaps.LastOrDefault();
+            var row = new TableRowModel
+            {
+                Index = logicalRowIndex,
+                Properties = table.Rows[sourceRowIndex].Properties,
+                Cells = new List<TableCellModel>()
+            };
+
+            for (int columnIndex = 0; columnIndex < tapColumnCount && cellCursor < flattenedCells.Count; columnIndex++, cellCursor++)
+            {
+                var cell = flattenedCells[cellCursor];
+                ConfigureRebuiltCell(cell, rowTap, columnIndex, 1);
+                row.Cells.Add(cell);
+            }
+
+            while (row.Cells.Count < tapColumnCount)
+            {
+                int columnIndex = row.Cells.Count;
+                var emptyCell = new TableCellModel
+                {
+                    Paragraphs = new List<ParagraphModel> { new() },
+                    Properties = new TableCellProperties()
+                };
+                ConfigureRebuiltCell(emptyCell, rowTap, columnIndex, 1);
+                row.Cells.Add(emptyCell);
+            }
+
+            rebuiltRows.Add(row);
+            effectiveTaps.Add(rowTap);
+        }
+
+        table.Rows = rebuiltRows;
+        rebuiltRowTaps = effectiveTaps;
+        return true;
+    }
+
+    private static void ConfigureRebuiltCell(TableCellModel cell, TapBase? rowTap, int columnIndex, int columnSpan)
+    {
+        cell.Index = columnIndex;
+        cell.ColumnIndex = columnIndex;
+        cell.ColumnSpan = Math.Max(1, columnSpan);
+        cell.RowSpan = Math.Max(1, cell.RowSpan);
+
+        if (rowTap?.CellWidths == null || rowTap.CellWidths.Length <= columnIndex)
+            return;
+
+        cell.Properties ??= new TableCellProperties();
+
+        int width = 0;
+        for (int offset = 0; offset < cell.ColumnSpan && columnIndex + offset < rowTap.CellWidths.Length; offset++)
+        {
+            width += rowTap.CellWidths[columnIndex + offset];
+        }
+
+        if (width > 0)
+        {
+            cell.Properties.Width = width;
+        }
+    }
+
+    private static int GetLeadingHorizontalSpan(TapBase? rowTap, int tapColumnCount)
+    {
+        var merges = rowTap?.CellMerges;
+        if (merges == null || merges.Length == 0 || !merges[0].HorizFirst)
+            return 0;
+
+        int span = 1;
+        for (int index = 1; index < merges.Length && index < tapColumnCount; index++)
+        {
+            if (!merges[index].HorizMerged)
+                break;
+
+            span++;
+        }
+
+        return span;
+    }
+
+    private static int InferSequentialSingleCellColumnCount(TableModel table)
+    {
+        if (table.Rows.Count < 10 || table.Rows.Any(row => row.Cells.Count != 1))
+            return 0;
+
+        var texts = table.Rows
+            .Select(row => row.Cells[0].Paragraphs.FirstOrDefault()?.Text?.Trim() ?? string.Empty)
+            .ToList();
+
+        if (texts.Count < 8 || !LooksLikeMonthYear(texts[0]))
+            return 0;
+
+        string[] expectedDays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        if (!texts.Skip(1).Take(expectedDays.Length).SequenceEqual(expectedDays, StringComparer.OrdinalIgnoreCase))
+            return 0;
+
+        return 13;
+    }
+
+    private static bool LooksLikeMergedCalendarTitle(List<TableCellModel> flattenedCells, int tapColumnCount)
+    {
+        if (tapColumnCount != 13 || flattenedCells.Count <= tapColumnCount)
+            return false;
+
+        var title = flattenedCells[0].Paragraphs.FirstOrDefault()?.Text?.Trim();
+        return LooksLikeMonthYear(title);
+    }
+
+    private static bool LooksLikeMonthYear(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        return Regex.IsMatch(text, "^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{4}$", RegexOptions.IgnoreCase);
+    }
+
+    private static bool TryParseMonthYear(string? text, out int month, out int year)
+    {
+        month = 0;
+        year = 0;
+
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        if (!DateTime.TryParseExact(text.Trim(), "MMMM yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return false;
+
+        month = parsed.Month;
+        year = parsed.Year;
+        return true;
+    }
+
+    private static TableRowModel CreateCalendarRow(int rowIndex, TapBase? rowTap)
+    {
+        var row = new TableRowModel
+        {
+            Index = rowIndex,
+            Properties = rowTap == null ? null : new TableRowProperties
+            {
+                Height = rowTap.RowHeight,
+                HeightIsExact = rowTap.HeightIsExact,
+                IsHeaderRow = rowTap.IsHeaderRow,
+                AllowBreakAcrossPages = !rowTap.CantSplit
+            }
+        };
+
+        for (int columnIndex = 0; columnIndex < 13; columnIndex++)
+        {
+            var emptyCell = new TableCellModel
+            {
+                Paragraphs = new List<ParagraphModel> { new() },
+                Properties = new TableCellProperties()
+            };
+            ConfigureRebuiltCell(emptyCell, rowTap, columnIndex, 1);
+            row.Cells.Add(emptyCell);
+        }
+
+        return row;
     }
 
     private static TableCellModel? GetCell(TableModel table, int rowIndex, int columnIndex)

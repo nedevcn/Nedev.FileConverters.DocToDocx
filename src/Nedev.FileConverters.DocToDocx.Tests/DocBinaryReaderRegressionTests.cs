@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text;
@@ -92,6 +93,30 @@ public class DocBinaryReaderRegressionTests
         Assert.Equal(1, font.Pitch);
         Assert.Equal(0, font.Charset);
         Assert.Equal(1, font.Type);
+    }
+
+    [Fact]
+    public void StyleReader_ParsesStshWhenOffsetIsZero()
+    {
+        var stsh = BuildStyleSheetAtOffsetZero("Title", sti: 15, sgc: 1);
+        var fib = CreateSyntheticFibReader(fibReader =>
+        {
+            SetAutoProperty(fibReader, nameof(FibReader.FcStshf), 0u);
+            SetAutoProperty(fibReader, nameof(FibReader.LcbStshf), (uint)stsh.Length);
+        });
+
+        using var stream = new MemoryStream(stsh);
+        using var reader = new BinaryReader(stream, Encoding.Unicode, leaveOpen: true);
+        var styleReader = new StyleReader(reader, fib);
+
+        styleReader.Read();
+
+        var titleStyle = Assert.Single(styleReader.Styles.Styles.Where(style =>
+            style.Type == StyleType.Paragraph &&
+            string.Equals(style.Name, "Title", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(ParagraphAlignment.Center, titleStyle.ParagraphProperties?.Alignment);
+        Assert.True(titleStyle.RunProperties?.IsBold);
+        Assert.True(titleStyle.RunProperties?.FontSize >= 56);
     }
 
     [Fact]
@@ -389,6 +414,32 @@ public class DocBinaryReaderRegressionTests
         buffer[5] = (byte)(mainName.Length + 1);
         nameBytes.CopyTo(buffer, 40);
         return buffer;
+    }
+
+    private static byte[] BuildStyleSheetAtOffsetZero(string name, ushort sti, ushort sgc)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.Unicode, leaveOpen: true);
+
+        writer.Write((ushort)18); // cbStshi
+        writer.Write((ushort)1); // cstd
+        writer.Write((ushort)10); // cbSTDBaseInFile
+        writer.Write(new byte[14]); // remaining STSHI bytes
+
+        var nameBytes = Encoding.Unicode.GetBytes(name);
+        var cbStd = (ushort)(10 + 2 + nameBytes.Length + 2);
+        writer.Write(cbStd);
+        writer.Write(sti);
+        writer.Write((ushort)((0x0FFF << 4) | (sgc & 0x000F)));
+        writer.Write((ushort)(0x0FFF << 4));
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)name.Length);
+        writer.Write(nameBytes);
+        writer.Write((ushort)0);
+        writer.Flush();
+
+        return stream.ToArray();
     }
 
     private static FibReader CreateSyntheticFibReader(Action<FibReader> configure)

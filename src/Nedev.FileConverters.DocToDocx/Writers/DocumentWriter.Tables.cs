@@ -364,6 +364,7 @@ public partial class DocumentWriter
         bool hasTcPr = cell.Properties?.Width > 0 || cell.ColumnSpan > 1 || cell.RowSpan > 1 || isVmergeContinue ||
                        cell.Properties?.BorderTop != null || cell.Properties?.BorderBottom != null ||
                        cell.Properties?.BorderLeft != null || cell.Properties?.BorderRight != null ||
+                       cell.Properties?.Shading != null ||
                        cell.Properties?.NoWrap == true ||
                        (cell.Properties != null && cell.Properties.VerticalAlignment != VerticalAlignment.Top);
 

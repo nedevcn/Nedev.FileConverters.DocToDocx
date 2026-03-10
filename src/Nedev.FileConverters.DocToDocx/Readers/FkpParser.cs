@@ -305,6 +305,7 @@ public class FkpParser
             if (bxOffset >= data.Length) break;
             
             var props = new PapBase();
+            var rawGrpprl = Array.Empty<byte>();
             var bx = data[bxOffset]; // First byte of BX is the word offset
             var dataOffset = bx * 2;
             if (dataOffset < WordConsts.FKP_PAGE_SIZE && dataOffset < data.Length)
@@ -329,12 +330,12 @@ public class FkpParser
                     var grpprlLength = cb - 2;
                     if (grpprlLength > 0 && dataOffset + 3 + grpprlLength <= data.Length)
                     {
-                        var grpprl = new byte[grpprlLength];
-                        Array.Copy(data, dataOffset + 3, grpprl, 0, grpprlLength);
+                        rawGrpprl = new byte[grpprlLength];
+                        Array.Copy(data, dataOffset + 3, rawGrpprl, 0, grpprlLength);
                         // Decode paragraph and table (TAP) properties from the same GRPPRL.
-                        _sprmParser.ApplyToPap(grpprl, props);
+                        _sprmParser.ApplyToPap(rawGrpprl, props);
                         var tap = new TapBase();
-                        _sprmParser.ApplyToTap(grpprl, tap);
+                        _sprmParser.ApplyToTap(rawGrpprl, tap);
                         props.Tap = tap;
                     }
                 }
@@ -351,6 +352,7 @@ public class FkpParser
                 {
                     StartCpOffset = cpStart,
                     EndCpOffset = cpEnd,
+                    RawGrpprl = rawGrpprl,
                     Properties = props
                 });
             }
@@ -517,9 +519,23 @@ public class FkpParser
             DateDel = chp.DateDel,
             DateIns = chp.DateIns
         };
-        if (chp.FontIndex >= 0 && chp.FontIndex < styles.Fonts.Count)
-            props.FontName = styles.Fonts[chp.FontIndex].Name;
+        props.FontName = ResolveFontName(styles, chp.FontIndex);
         return props;
+    }
+
+    private static string? ResolveFontName(StyleSheet styles, int fontIndex)
+    {
+        if (fontIndex < 0 || fontIndex >= styles.Fonts.Count)
+            return null;
+
+        var font = styles.Fonts[fontIndex];
+        if (!string.IsNullOrWhiteSpace(font.Name) &&
+            !string.Equals(font.Name, $"Font{font.Index}", StringComparison.OrdinalIgnoreCase))
+        {
+            return font.Name;
+        }
+
+        return string.IsNullOrWhiteSpace(font.AltName) ? null : font.AltName;
     }
 
     public ParagraphProperties ConvertToParagraphProperties(PapBase pap, StyleSheet styles)
@@ -530,8 +546,11 @@ public class FkpParser
             StyleIndex = styleIndex,
             Alignment = (ParagraphAlignment)pap.Justification,
             IndentLeft = pap.IndentLeft,
+            IndentLeftChars = pap.IndentLeftChars,
             IndentRight = pap.IndentRight,
+            IndentRightChars = pap.IndentRightChars,
             IndentFirstLine = pap.IndentFirstLine,
+            IndentFirstLineChars = pap.IndentFirstLineChars,
             SpaceBefore = pap.SpaceBefore,
             SpaceAfter = pap.SpaceAfter,
             LineSpacing = pap.LineSpacing,
@@ -579,5 +598,6 @@ public class PapFkpEntry
 {
     public int StartCpOffset { get; set; }
     public int EndCpOffset { get; set; }
+    public byte[] RawGrpprl { get; set; } = Array.Empty<byte>();
     public PapBase Properties { get; set; } = new();
 }

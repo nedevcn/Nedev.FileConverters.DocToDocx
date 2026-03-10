@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Readers;
 using Nedev.FileConverters.DocToDocx.Utils;
 using Xunit;
@@ -131,6 +132,28 @@ public class SprmParserTests
 
         Assert.False(chp.IsShadow);
         Assert.False(chp.IsEmboss);
+    }
+
+    [Fact]
+    public void ApplyToPap_DecodesCharacterUnitIndents()
+    {
+        using var stream = new MemoryStream();
+        using var reader = new BinaryReader(stream);
+        var parser = new SprmParser(reader, 0);
+        var pap = new PapBase();
+        var applyMethod = typeof(SprmParser).GetMethod("ApplyPapSprm", BindingFlags.Instance | BindingFlags.NonPublic);
+        var sprmType = typeof(SprmParser).GetNestedType("Sprm", BindingFlags.NonPublic);
+
+        Assert.NotNull(applyMethod);
+        Assert.NotNull(sprmType);
+
+        ApplySprm(parser, sprmType!, applyMethod!, pap, WordConsts.SPRM_PCHTO, 206);
+        ApplySprm(parser, sprmType!, applyMethod!, pap, WordConsts.SPRM_PCHTO2, 32);
+        ApplySprm(parser, sprmType!, applyMethod!, pap, WordConsts.SPRM_PCHTO3, 18);
+
+        Assert.Equal(206, pap.IndentFirstLineChars);
+        Assert.Equal(32, pap.IndentLeftChars);
+        Assert.Equal(18, pap.IndentRightChars);
     }
 
     [Fact]
@@ -396,6 +419,15 @@ public class SprmParserTests
         applyMethod.Invoke(parser, new object[] { sprm, chp });
     }
 
+    private static void ApplySprm(SprmParser parser, Type sprmType, MethodInfo applyMethod, PapBase pap, ushort code, uint operand)
+    {
+        var sprm = Activator.CreateInstance(sprmType)!;
+        sprmType.GetProperty("Code")!.SetValue(sprm, code);
+        sprmType.GetProperty("Operand")!.SetValue(sprm, operand);
+        sprmType.GetProperty("OperandSize")!.SetValue(sprm, 0);
+        applyMethod.Invoke(parser, new object[] { sprm, pap });
+    }
+
     private static void ApplyVariableSprm(SprmParser parser, Type sprmType, MethodInfo applyMethod, ChpBase chp, ushort code, params byte[] operand)
     {
         var sprm = Activator.CreateInstance(sprmType)!;
@@ -606,7 +638,7 @@ public class SprmParserTests
         if (pap == null)
             return "<none>";
 
-        return $"just={pap.Justification} istd={pap.Istd} style={pap.StyleId} left={pap.IndentLeft} first={pap.IndentFirstLine} right={pap.IndentRight} before={pap.SpaceBefore} after={pap.SpaceAfter} line={pap.LineSpacing} mult={pap.LineSpacingMultiple} list={pap.ListFormatId}/{pap.ListLevel}";
+        return $"just={pap.Justification} istd={pap.Istd} style={pap.StyleId} left={pap.IndentLeft} leftChars={pap.IndentLeftChars} first={pap.IndentFirstLine} firstChars={pap.IndentFirstLineChars} right={pap.IndentRight} rightChars={pap.IndentRightChars} before={pap.SpaceBefore} after={pap.SpaceAfter} line={pap.LineSpacing} mult={pap.LineSpacingMultiple} list={pap.ListFormatId}/{pap.ListLevel}";
     }
 
     private static string DescribeBtePages(BinaryReader tableReader, BinaryReader wordDocReader, uint fc, uint lcb)

@@ -338,6 +338,19 @@ public class SprmParser
 
     private void ApplyPapSprm(Sprm sprm, PapBase pap)
     {
+        switch (sprm.Code)
+        {
+            case WordConsts.SPRM_PCHTO:
+                pap.IndentFirstLineChars = (byte)sprm.Operand;
+                return;
+            case WordConsts.SPRM_PCHTO2:
+                pap.IndentLeftChars = (byte)sprm.Operand;
+                return;
+            case WordConsts.SPRM_PCHTO3:
+                pap.IndentRightChars = (byte)sprm.Operand;
+                return;
+        }
+
         var sprmCode = sprm.Code & 0x01FF;
         var sgc = (sprm.Code >> 10) & 0x07;
         
@@ -793,8 +806,11 @@ public class PapBase
     public bool KeepTogether { get; set; }
     public bool PageBreakBefore { get; set; }
     public int IndentLeft { get; set; }
+    public int IndentLeftChars { get; set; }
     public int IndentRight { get; set; }
+    public int IndentRightChars { get; set; }
     public int IndentFirstLine { get; set; }
+    public int IndentFirstLineChars { get; set; }
     public int LineSpacing { get; set; } = 240;
     public int LineSpacingMultiple { get; set; } = 1;
     public int SpaceBefore { get; set; }

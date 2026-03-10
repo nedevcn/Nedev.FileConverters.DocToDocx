@@ -210,8 +210,11 @@ public class StylesWriter
             StyleIndex = source.StyleIndex,
             Alignment = source.Alignment,
             IndentLeft = source.IndentLeft,
+            IndentLeftChars = source.IndentLeftChars,
             IndentRight = source.IndentRight,
+            IndentRightChars = source.IndentRightChars,
             IndentFirstLine = source.IndentFirstLine,
+            IndentFirstLineChars = source.IndentFirstLineChars,
             SpaceBefore = source.SpaceBefore,
             SpaceAfter = source.SpaceAfter,
             LineSpacing = source.LineSpacing,
@@ -800,15 +803,27 @@ public class StylesWriter
         }
 
         // Indentation
-        if (props.IndentLeft != 0 || props.IndentRight != 0 || props.IndentFirstLine != 0)
+        if (props.IndentLeft != 0 || props.IndentLeftChars != 0 || props.IndentRight != 0 || props.IndentRightChars != 0 || props.IndentFirstLine != 0 || props.IndentFirstLineChars != 0)
         {
             _writer.WriteStartElement("w", "ind", wNs);
             if (props.IndentLeft != 0)
                 _writer.WriteAttributeString("w", "left", wNs, props.IndentLeft.ToString());
+            if (props.IndentLeftChars != 0)
+                _writer.WriteAttributeString("w", "leftChars", wNs, props.IndentLeftChars.ToString());
             if (props.IndentRight != 0)
                 _writer.WriteAttributeString("w", "right", wNs, props.IndentRight.ToString());
+            if (props.IndentRightChars != 0)
+                _writer.WriteAttributeString("w", "rightChars", wNs, props.IndentRightChars.ToString());
 
-            if (props.IndentFirstLine > 0)
+            if (props.IndentFirstLineChars > 0)
+            {
+                _writer.WriteAttributeString("w", "firstLineChars", wNs, props.IndentFirstLineChars.ToString());
+            }
+            else if (props.IndentFirstLineChars < 0)
+            {
+                _writer.WriteAttributeString("w", "hangingChars", wNs, Math.Abs(props.IndentFirstLineChars).ToString());
+            }
+            else if (props.IndentFirstLine > 0)
             {
                 _writer.WriteAttributeString("w", "firstLine", wNs, props.IndentFirstLine.ToString());
             }

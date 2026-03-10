@@ -275,8 +275,11 @@ public class ParagraphProperties
     public int StyleIndex { get; set; } = -1;
     public ParagraphAlignment Alignment { get; set; } = ParagraphAlignment.Left;
     public int IndentLeft { get; set; }
+    public int IndentLeftChars { get; set; }
     public int IndentRight { get; set; }
+    public int IndentRightChars { get; set; }
     public int IndentFirstLine { get; set; }
+    public int IndentFirstLineChars { get; set; }
     public int SpaceBefore { get; set; }
     public int SpaceAfter { get; set; }
     public int LineSpacing { get; set; } = 240;
@@ -320,8 +323,11 @@ public class ParagraphProperties
         // Since the current model doesn't use nullable for most structs, we merge non-defaults.
         if (Alignment == ParagraphAlignment.Left && baseProps.Alignment != ParagraphAlignment.Left) Alignment = baseProps.Alignment;
         if (IndentLeft == 0 && baseProps.IndentLeft != 0) IndentLeft = baseProps.IndentLeft;
+        if (IndentLeftChars == 0 && baseProps.IndentLeftChars != 0) IndentLeftChars = baseProps.IndentLeftChars;
         if (IndentRight == 0 && baseProps.IndentRight != 0) IndentRight = baseProps.IndentRight;
+        if (IndentRightChars == 0 && baseProps.IndentRightChars != 0) IndentRightChars = baseProps.IndentRightChars;
         if (IndentFirstLine == 0 && baseProps.IndentFirstLine != 0) IndentFirstLine = baseProps.IndentFirstLine;
+        if (IndentFirstLineChars == 0 && baseProps.IndentFirstLineChars != 0) IndentFirstLineChars = baseProps.IndentFirstLineChars;
         if (SpaceBefore == 0 && baseProps.SpaceBefore != 0) SpaceBefore = baseProps.SpaceBefore;
         if (SpaceAfter == 0 && baseProps.SpaceAfter != 0) SpaceAfter = baseProps.SpaceAfter;
         if (LineSpacing == 240 && baseProps.LineSpacing != 240) LineSpacing = baseProps.LineSpacing;
