@@ -45,18 +45,32 @@ The following areas are the main remaining implementation and maintenance hotspo
 
 ### Library
 
-Reference the Nedev.FileConverters.DocToDocx assembly and call the public converter API:
+A new set of overloads is available for working directly with streams, which is
+handy for scenarios such as web applications or in-memory transformations.  The
+input stream must be readable (and preferably seekable), and the output stream
+must be writable.  Neither stream is closed by the API.
+
+Reference the Nedev.FileConverters.DocToDocx assembly and call the public
+converter API:
 
 ```csharp
 using Nedev.FileConverters.DocToDocx;
 
+// file-based conversion (existing API)
 DocToDocxConverter.Convert("input.doc", "output.docx");
 
+// same as above with options
 DocToDocxConverter.Convert(
     "input.doc",
     "output.docx",
     password: null,
     enableHyperlinks: false);
+
+// stream-based conversion
+using var input = File.OpenRead("input.doc");
+using var output = new MemoryStream();
+DocToDocxConverter.Convert(input, output);
+// output now contains a valid DOCX package
 ```
 
 ### Async conversion with progress
@@ -98,6 +112,11 @@ When the input is a DOC file, the tool converts it. When the input is already a 
 - `--no-hyperlinks` Disable hyperlink elements and relationships in the generated DOCX.
 - `-v`, `--version` Print the CLI version and exit.
 - `-h`, `--help` Show usage information and exit.
+
+The CLI now also documents exit codes in its help output:
+  - `0` success
+  - `1` conversion/runtime error
+  - `2` invalid arguments (help shown)
 
 ## Running the tests
 

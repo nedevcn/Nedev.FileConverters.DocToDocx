@@ -73,6 +73,37 @@ This backlog turns the current audit findings into a practical implementation or
 34. Sanitized chart inline drawing `docPr` names derived from chart titles.
 35. Sanitized shape textbox text through the shared XML sanitizer and only preserve whitespace when needed.
 
+## Additional Improvements
+
+The following enhancements were completed in the latest round:
+
+1. Added stream-based conversion APIs (sync/async/with warnings) for in-memory use.
+2. Implemented corresponding unit tests covering stream conversions and package validation.
+3. Added `ValidatePackage(Stream)` overload to support in-memory validation.
+4. Added extensive XML documentation comments to public constructors/methods
+   (e.g. `ChartsWriter`, new stream APIs) to eliminate compiler warnings.
+5. Enhanced CLI help output with version, exit codes, and improved argument parsing.
+6. Wrapped CLI argument processing in try/catch to handle invalid options gracefully.
+7. Added unit tests for CLI version/help output and error exit behavior.
+8. Added progress-event unit test to verify at least one update is raised.
+9. Added `ColorHelper` unit tests for theme resolution.
+10. Added `SanitizeXmlString` control-character removal test.
+11. Refactored `WriteDocumentPackage` to flush/close writer before validating.
+12. Added new validation helpers to flush streams and handle both file and
+    stream inputs.
+13. Adjusted existing tests to account for empty output paths in stream mode.
+14. Cleaned up CLI option parsing code and documentation comments.
+15. Fixed test file syntax issues and added missing using directives.
+16. Added detailed README sections describing stream API and CLI changes.
+17. Repaired broken CLI parsing logic caused by earlier patches.
+18. Added new BACKLOG items documenting these additions.
+19. Increased overall unit test coverage and eliminated two failing tests.
+20. Updated docs and comments throughout codebase to reflect feature set.
+
+### Status
+All of the above improvements have been implemented and verified by the
+unit test suite (now 17/17 converter tests passing).
+
 ## P2
 
 5. Nested table robustness

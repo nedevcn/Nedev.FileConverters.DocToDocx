@@ -24,7 +24,7 @@ public static class DocToDocxConverter
     };
 
     /// <summary>
-    /// Converts a DOC file to DOCX format
+        /// Converts a DOC file to DOCX format from disk paths.
     /// </summary>
     /// <param name="inputPath">Path to the input .doc file</param>
     /// <param name="outputPath">Path to the output .docx file</param>
@@ -56,6 +56,88 @@ public static class DocToDocxConverter
     /// </summary>
     public static Task ConvertAsync(string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password = null, bool enableHyperlinks = true, CancellationToken cancellationToken = default)
         => Task.Run(() => Convert(inputPath, outputPath, progress, password, enableHyperlinks, cancellationToken), cancellationToken);
+
+    // --------- stream-based APIs ---------
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream.
+    /// The input stream must be readable and seekable; the output stream must be writable.
+    /// Neither stream is closed by this method.
+    /// </summary>
+    public static void Convert(Stream inputStream, Stream outputStream, string? password = null, bool enableHyperlinks = true)
+        => Convert(inputStream, outputStream, progress: null, password, enableHyperlinks, CancellationToken.None);
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream and returns any non-fatal warnings.
+    /// </summary>
+    public static ConversionResult ConvertWithWarnings(Stream inputStream, Stream outputStream, string? password = null, bool enableHyperlinks = true)
+        => ConvertWithWarnings(inputStream, outputStream, progress: null, password, enableHyperlinks, CancellationToken.None);
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream asynchronously.
+    /// </summary>
+    public static Task ConvertAsync(Stream inputStream, Stream outputStream, string? password = null, bool enableHyperlinks = true, CancellationToken cancellationToken = default)
+        => Task.Run(() => Convert(inputStream, outputStream, progress: null, password, enableHyperlinks, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream asynchronously and returns captured warnings.
+    /// </summary>
+    public static Task<ConversionResult> ConvertWithWarningsAsync(Stream inputStream, Stream outputStream, string? password = null, bool enableHyperlinks = true, CancellationToken cancellationToken = default)
+        => Task.Run(() => ConvertWithWarnings(inputStream, outputStream, progress: null, password, enableHyperlinks, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream with progress reporting and optional cancellation.
+    /// </summary>
+    public static void Convert(Stream inputStream, Stream outputStream, IProgress<ConversionProgress>? progress, string? password, bool enableHyperlinks, CancellationToken cancellationToken)
+    {
+        if (inputStream == null) throw new ArgumentNullException(nameof(inputStream));
+        if (outputStream == null) throw new ArgumentNullException(nameof(outputStream));
+        if (!inputStream.CanRead)
+            throw new ArgumentException("Input stream must be readable.", nameof(inputStream));
+        if (!outputStream.CanWrite)
+            throw new ArgumentException("Output stream must be writable.", nameof(outputStream));
+
+        inputStream.Seek(0, SeekOrigin.Begin);
+        var inputKind = DetectInputKind(inputStream, null);
+        if (inputKind == InputDocumentKind.Docx)
+        {
+            // copy entire stream
+            inputStream.Seek(0, SeekOrigin.Begin);
+            inputStream.CopyTo(outputStream);
+            return;
+        }
+
+        if (inputKind != InputDocumentKind.Doc)
+            throw new InvalidDataException("Unsupported input stream format. Expected DOC or DOCX.");
+
+        cancellationToken.ThrowIfCancellationRequested();
+        Report(progress, ConversionStage.Reading, 15, "Reading DOC stream.");
+        using var reader = new DocReader(inputStream, password);
+        reader.Load();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var document = reader.Document;
+        var imageBytes = document.Images.Sum(image => image.Data?.Length ?? 0);
+        Report(progress, ConversionStage.Parsing, 55,
+            $"Recovered {document.Paragraphs.Count} paragraphs, {document.Tables.Count} tables, {document.Images.Count} images ({imageBytes / 1024} KB).");
+
+        WriteDocumentPackage(document, outputStream, enableHyperlinks, validatePackage: true, cancellationToken);
+        Report(progress, ConversionStage.Complete, 100, "Wrote DOCX package to output stream.");
+    }
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream with progress reporting, cancellation, and captured warnings.
+    /// </summary>
+    public static ConversionResult ConvertWithWarnings(Stream inputStream, Stream outputStream, IProgress<ConversionProgress>? progress, string? password, bool enableHyperlinks, CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+        using (Logger.BeginDiagnosticCapture(diagnostics))
+        {
+            Convert(inputStream, outputStream, progress, password, enableHyperlinks, cancellationToken);
+        }
+
+        return new ConversionResult(outputStream is FileStream fs ? fs.Name : null ?? "", diagnostics);
+    }
 
     /// <summary>
     /// Converts a DOC file to DOCX format asynchronously with progress reporting and captured warnings.
@@ -238,6 +320,74 @@ public static class DocToDocxConverter
         }
     }
 
+    /// <summary>
+    /// Validates a DOCX package read from a stream. The stream must be readable
+    /// and seekable; it will not be closed by this method but its position may be
+    /// modified during validation.
+    /// </summary>
+    public static bool ValidatePackage(Stream stream, out string? errorMessage)
+    {
+        if (stream == null)
+        {
+            errorMessage = "Package stream cannot be null.";
+            return false;
+        }
+
+        if (!stream.CanRead || !stream.CanSeek)
+        {
+            errorMessage = "Package stream must be readable and seekable.";
+            return false;
+        }
+
+        try
+        {
+            var originalPos = stream.Position;
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            var entryNames = archive.Entries
+                .Select(entry => NormalizeEntryPath(entry.FullName))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var requiredEntry in RequiredPackageEntries)
+            {
+                if (!entryNames.Contains(requiredEntry))
+                {
+                    errorMessage = $"Missing required package part '{requiredEntry}'.";
+                    stream.Position = originalPos;
+                    return false;
+                }
+            }
+
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var reader = XmlReader.Create(entry.Open(), CreateXmlReaderSettings());
+                    while (reader.Read()) { }
+                }
+
+                if (!entry.FullName.EndsWith(".rels", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var missingTarget = FindMissingInternalRelationshipTarget(archive, entry);
+                if (missingTarget != null)
+                {
+                    errorMessage = $"Relationship part '{entry.FullName}' references missing target '{missingTarget}'.";
+                    stream.Position = originalPos;
+                    return false;
+                }
+            }
+
+            errorMessage = null;
+            stream.Position = originalPos;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return false;
+        }
+    }
+
     private static void ValidateConversionPaths(string inputPath, string outputPath)
     {
         if (string.IsNullOrWhiteSpace(inputPath))
@@ -262,16 +412,39 @@ public static class DocToDocxConverter
 
         using (var stream = File.Create(outputPath))
         {
-            using var zipWriter = new ZipWriter(stream);
+            WriteDocumentPackage(document, stream, enableHyperlinks, validatePackage, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Writes a document model to an existing stream (typically a <see cref="FileStream"/>) in DOCX ZIP format.
+    /// The stream is **not** closed by this method; callers are responsible for disposing it.
+    /// </summary>
+    private static void WriteDocumentPackage(DocumentModel document, Stream outputStream, bool enableHyperlinks, bool validatePackage, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // no directory check needed when working with streams
+
+        // write the document into the zip archive and make sure the writer is disposed
+        {
+            using var zipWriter = new ZipWriter(outputStream);
             var options = new Writers.DocumentWriterOptions { EnableHyperlinks = enableHyperlinks };
-            Logger.Debug($"DocToDocxConverter.WriteDocumentPackage START: output={outputPath} paragraphs={document.Paragraphs.Count} tables={document.Tables.Count}");
+            Logger.Debug($"DocToDocxConverter.WriteDocumentPackage START: stream paragraphs={document.Paragraphs.Count} tables={document.Tables.Count}");
             zipWriter.WriteDocument(document, options);
-            Logger.Debug($"DocToDocxConverter.WriteDocumentPackage AFTER WriteDocument: output={outputPath}");
+            Logger.Debug($"DocToDocxConverter.WriteDocumentPackage AFTER WriteDocument: stream complete");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (validatePackage && !ValidatePackage(outputPath, out var validationMessage))
-            throw new InvalidDataException($"Generated DOCX package failed validation: {validationMessage}");
+        if (validatePackage)
+        {
+            // perform basic validation by attempting to read the archive parts
+            outputStream.Flush();
+            outputStream.Position = 0;
+            if (!ValidatePackage(outputStream, out var validationMessage))
+                throw new InvalidDataException($"Generated DOCX package failed validation: {validationMessage}");
+            // reset position for caller
+            outputStream.Position = 0;
+        }
     }
 
     private static void CopyDocxInput(string inputPath, string outputPath)

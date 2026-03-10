@@ -25,47 +25,47 @@ public class Program
             return;
         }
 
-        if (args.Length < 2)
-        {
-            Console.WriteLine("Error: Missing required arguments.");
-            PrintUsage();
-            return;
-        }
-
-        string inputPath = args[0];
-        string outputPath = args[1];
-        string? password = null;
-        bool recursive = false;
-        bool disableHyperlinks = false;
-
-        // parse remaining options
-        for (int i = 2; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "-p":
-                case "--password":
-                    if (i + 1 < args.Length)
-                    {
-                        password = args[++i];
-                        break;
-                    }
-
-                    throw new ArgumentException("Missing password value after -p/--password.");
-                case "-r":
-                case "--recursive":
-                    recursive = true;
-                    break;
-                case "--no-hyperlinks":
-                    disableHyperlinks = true;
-                    break;
-                default:
-                    throw new ArgumentException($"Unknown option: {args[i]}");
-            }
-        }
-
         try
         {
+            if (args.Length < 2)
+            {
+                Console.WriteLine("Error: Missing required arguments.");
+                PrintUsage();
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            string inputPath = args[0];
+            string outputPath = args[1];
+            string? password = null;
+            bool recursive = false;
+            bool disableHyperlinks = false;
+
+            // parse remaining options
+            for (int i = 2; i < args.Length; i++)
+            {
+                switch (args[i])
+                {
+                    case "-p":
+                    case "--password":
+                        if (i + 1 < args.Length)
+                        {
+                            password = args[++i];
+                            break;
+                        }
+                        throw new ArgumentException("Missing password value after -p/--password.");
+                    case "-r":
+                    case "--recursive":
+                        recursive = true;
+                        break;
+                    case "--no-hyperlinks":
+                        disableHyperlinks = true;
+                        break;
+                    default:
+                        throw new ArgumentException($"Unknown option: {args[i]}");
+                }
+            }
+
             if (Directory.Exists(inputPath))
             {
                 if (!Directory.Exists(outputPath))
@@ -135,7 +135,7 @@ public class Program
 
     static void PrintUsage()
     {
-        Console.WriteLine("Usage: Nedev.DocToDocx.Cli <input.doc|inputDir> <output.docx|outputDir> [-p <password>] [-r]");
+        Console.WriteLine("Usage: Nedev.DocToDocx.Cli <input.doc|inputDir> <output.docx|outputDir> [-p <password>] [-r] [--no-hyperlinks] [-v|--version]");
         Console.WriteLine();
         Console.WriteLine("Arguments:");
         Console.WriteLine("  <input.doc>      The path to the input MS-DOC file.");
@@ -145,7 +145,13 @@ public class Program
         Console.WriteLine("  -p, --password   The password to open an encrypted DOC file.");
         Console.WriteLine("  -r, --recursive  When input is a directory, process .doc files recursively.");
         Console.WriteLine("  -h, --help       Show this help message and exit.");
+        Console.WriteLine("  -v, --version    Print the CLI version and exit.");
         Console.WriteLine("      --no-hyperlinks    Disable hyperlink elements and relationships in the generated DOCX.\n" +
                           "                       Text remains but links are treated as regular text, avoiding Word warnings");
+        Console.WriteLine();
+        Console.WriteLine("Exit codes:");
+        Console.WriteLine("  0   Success");
+        Console.WriteLine("  1   Conversion or runtime error");
+        Console.WriteLine("  2   Invalid arguments (help shown)");
     }
 }

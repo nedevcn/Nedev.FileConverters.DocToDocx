@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Nedev.FileConverters.Core;
 using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Utils;
@@ -231,6 +233,139 @@ public class DocToDocxConverterTests
         using var archive = new ZipArchive(output, ZipArchiveMode.Read, leaveOpen: true);
         Assert.NotNull(archive.GetEntry("word/document.xml"));
         Assert.True(output.Length > 0);
+    }
+
+    [Fact]
+    public void Convert_StreamBasedApi_ReturnsValidPackage()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+        using var input = File.OpenRead(inputPath);
+        using var outputStream = new MemoryStream();
+
+        DocToDocxConverter.Convert(input, outputStream, password: null, enableHyperlinks: true);
+        outputStream.Position = 0;
+        using var archive = new ZipArchive(outputStream, ZipArchiveMode.Read, leaveOpen: true);
+        Assert.NotNull(archive.GetEntry("word/document.xml"));
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_StreamBasedApi_PopulatesResult()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+        using var input = File.OpenRead(inputPath);
+        using var outputStream = new MemoryStream();
+
+        var result = DocToDocxConverter.ConvertWithWarnings(input, outputStream);
+        Assert.NotNull(result);
+        // when converting using streams there is no file path available, so we
+        // simply ensure the property is at least non-null and allow it to be
+        // empty.
+        Assert.NotNull(result.OutputPath);
+        // diagnostics list may be empty when no warnings are generated, but it
+        // should never be null.
+        Assert.NotNull(result.Diagnostics);
+    }
+
+    [Fact]
+    public void Convert_ProgressEvent_FiresAtLeastOnce()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+        var updates = new List<ConversionProgress>();
+        using var input = File.OpenRead(inputPath);
+        using var outputStream = new MemoryStream();
+
+        var progress = new ImmediateProgress<ConversionProgress>(updates.Add);
+        DocToDocxConverter.Convert(input, outputStream, progress, password: null, enableHyperlinks: true, CancellationToken.None);
+        Assert.NotEmpty(updates);
+    }
+
+    [Fact]
+    public void ValidatePackage_StreamOverload_Works()
+    {
+        // create a temporary package on disk and then validate via a stream
+        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+        try
+        {
+            var document = new DocumentModel();
+            document.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "x" } } });
+            DocToDocxConverter.SaveDocument(document, tempPath);
+
+            using var ms = new MemoryStream();
+            using (var file = File.OpenRead(tempPath))
+            {
+                file.CopyTo(ms);
+            }
+            ms.Position = 0;
+            Assert.True(DocToDocxConverter.ValidatePackage(ms, out var err));
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void ColorHelper_ThemeResolution_Works()
+    {
+        var theme = new ThemeModel();
+        theme.ColorMap["accent1"] = "112233";
+        int colorValue = 0x01000000 | 4;
+        Assert.Equal("112233", ColorHelper.ResolveThemeColorHex(colorValue, theme));
+    }
+
+    [Fact]
+    public void SanitizeXmlString_ControlCharactersRemoved()
+    {
+        var method = typeof(Nedev.FileConverters.DocToDocx.Writers.DocumentWriter)
+            .GetMethod("SanitizeXmlString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        string input = "a\u0001b\u0007c";
+        string cleaned = (string)method.Invoke(null, new object[] { input })!;
+        Assert.Equal("abc", cleaned);
+    }
+
+    [Fact]
+    public async Task Cli_HelpAndVersionBehave()
+    {
+        var writer = new StringWriter();
+        var original = Console.Out;
+        try
+        {
+            Console.SetOut(writer);
+            await Nedev.FileConverters.DocToDocx.Cli.Program.Main(new[] { "-v" });
+            var output = writer.ToString();
+            Assert.Contains("Version", output);
+
+            writer.GetStringBuilder().Clear();
+            await Nedev.FileConverters.DocToDocx.Cli.Program.Main(new[] { "--help" });
+            output = writer.ToString();
+            Assert.Contains("--version", output);
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+    }
+
+    [Fact]
+    public async Task Cli_UnknownOption_SetsExitCodeNonZero()
+    {
+        var writer = new StringWriter();
+        var original = Console.Out;
+        var originalExit = Environment.ExitCode;
+        try
+        {
+            Console.SetOut(writer);
+            await Nedev.FileConverters.DocToDocx.Cli.Program.Main(new[] { "input.doc", "output.docx", "--bogus" });
+            Assert.Equal(1, Environment.ExitCode);
+        }
+        finally
+        {
+            Console.SetOut(original);
+            Environment.ExitCode = originalExit;
+        }
     }
 
     private static void WriteEntry(ZipArchive archive, string entryName, string content)

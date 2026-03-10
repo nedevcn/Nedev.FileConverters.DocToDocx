@@ -13,11 +13,22 @@ public class ChartsWriter
 {
     private readonly XmlWriter _writer;
 
+    /// <summary>
+    /// Creates a new <see cref="ChartsWriter"/> that will emit chart XML to the
+    /// supplied <see cref="XmlWriter"/>.
+    /// </summary>
+    /// <param name="writer">The XML writer to which chart parts will be written.</param>
     public ChartsWriter(XmlWriter writer)
     {
         _writer = writer;
     }
 
+    /// <summary>
+    /// Writes a <c>chartN.xml</c> part representing the provided <see cref="ChartModel"/>.
+    /// The generated XML is intentionally sparse, focusing on producing a valid,
+    /// editable chart in Word rather than reproducing every legacy formatting detail.
+    /// </summary>
+    /// <param name="chart">The chart model to serialize.</param>
     public void WriteChart(ChartModel chart)
     {
         const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -99,6 +110,12 @@ public class ChartsWriter
         _writer.WriteEndDocument();
     }
 
+    /// <summary>
+    /// Gets the root chart element name for a given <see cref="ChartType"/>, e.g.
+    /// <c>barChart</c> or <c>lineChart</c>.
+    /// </summary>
+    /// <param name="type">The generic chart type.</param>
+    /// <returns>The string name used in the OOXML schema.</returns>
     public static string GetChartElementName(ChartType type) => type switch
     {
         ChartType.Line => "lineChart",
