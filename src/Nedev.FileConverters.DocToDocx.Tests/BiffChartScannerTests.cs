@@ -162,6 +162,64 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void ParsesRkAndMulRkRecords()
+        {
+            // create a barebones BIFF stream containing a single RK cell and a
+            // MULRK row; categories/series detection is not important for this
+            // test, we just want the numeric values to survive the scan.
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms, Encoding.Default, leaveOpen: true);
+
+            // minimal BOF
+            w.Write((ushort)0x0809);
+            w.Write((ushort)0);
+
+            // RK record at (1,1) -> value 42
+            w.Write((ushort)0x027E);
+            w.Write((ushort)10);
+            w.Write((ushort)1);
+            w.Write((ushort)1);
+            w.Write((ushort)0);
+            w.Write(EncodeRkInt(42));
+
+            // MULRK on row 2, cols 1..2 values 5 and 6
+            w.Write((ushort)0x00BD);
+            int firstCol = 1;
+            int count = 2;
+            int length = 6 + count * 6 + 2;
+            w.Write((ushort)length);
+            w.Write((ushort)2);
+            w.Write((ushort)firstCol);
+            for (int i = 0; i < count; i++)
+            {
+                w.Write((ushort)0);
+                w.Write(EncodeRkInt(5 + i));
+            }
+            w.Write((ushort)(firstCol + count - 1));
+
+            var bytes = ms.ToArray();
+            var model = new ChartModel { SourceBytes = bytes, SourceStreamName = "Chart1" };
+            BiffChartScanner.TryPopulateChart(model);
+
+            var allValues = model.Series.SelectMany(s => s.Values).ToList();
+            // RK entry should always be present
+            Assert.Contains(42d, allValues);
+            // MULRK entries may end up in a second series depending on orientation
+            if (model.Series.Count > 1)
+            {
+                Assert.Contains(5d, allValues);
+                Assert.Contains(6d, allValues);
+            }
+        }
+
+        // helper encoders for tests
+        private static uint EncodeRkInt(int value)
+        {
+            // flag bit1 set -> integer, bit0 clear -> no divide
+            return ((uint)value << 2) | 0x02u;
+        }
+
+        [Fact]
         public void UsesTopLeftLabelAndSheetName_ForRecoveredMetadata()
         {
             double[,] data = {

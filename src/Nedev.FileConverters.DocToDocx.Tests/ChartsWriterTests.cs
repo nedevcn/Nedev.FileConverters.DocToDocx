@@ -221,5 +221,32 @@ namespace Nedev.FileConverters.DocToDocx.Tests
 
             Assert.Contains(">Series 1</c:v>", xml);
         }
+
+        [Fact]
+        public void WriteChart_SeriesValueMismatch_PadsAndTruncates()
+        {
+            var model = new ChartModel
+            {
+                Type = ChartType.Column,
+                Categories = new List<string> { "A", "B", "C" },
+                Series =
+                {
+                    new ChartSeries { Name = "S1", Values = new List<double> { 1, 2 } },
+                    new ChartSeries { Name = "S2", Values = new List<double> { 3, 4, 5, 6 } }
+                }
+            };
+
+            using var ms = new MemoryStream();
+            using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer).WriteChart(model);
+            writer.Flush();
+            string xml = Encoding.UTF8.GetString(ms.ToArray());
+
+            // first series should be padded to three values, second truncated to three
+            Assert.Contains("<c:v>1</c:v>", xml);
+            Assert.Contains("<c:v>2</c:v>", xml);
+            Assert.Contains("<c:v>0</c:v>", xml); // padding
+            Assert.DoesNotContain("<c:v>6</c:v>", xml); // truncated
+        }
     }
 }
