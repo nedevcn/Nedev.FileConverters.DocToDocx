@@ -246,13 +246,17 @@ public partial class DocumentWriter
         // Optionally, basic textbox for shape text when available.
         if (!string.IsNullOrEmpty(shape.Text))
         {
+            var safeShapeText = SanitizeXmlString(shape.Text);
             _writer.WriteStartElement("wps", "txbx", wpsNs);
             _writer.WriteStartElement("w", "txbxContent", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             _writer.WriteStartElement("w", "p", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             _writer.WriteStartElement("w", "t", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-            _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
-            _writer.WriteString(shape.Text);
+            if (safeShapeText.StartsWith(' ') || safeShapeText.EndsWith(' ') || safeShapeText.Contains("  "))
+            {
+                _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
+            }
+            _writer.WriteString(safeShapeText);
             _writer.WriteEndElement(); // w:t
             _writer.WriteEndElement(); // w:r
             _writer.WriteEndElement(); // w:p

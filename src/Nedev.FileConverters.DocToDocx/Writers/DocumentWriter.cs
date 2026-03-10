@@ -163,7 +163,9 @@ public partial class DocumentWriter
         // docPr with a simple name derived from the chart index or title.
         _writer.WriteStartElement("wp", "docPr", wpNs);
         _writer.WriteAttributeString("id", (1000 + chartIndex).ToString());
-        var baseName = !string.IsNullOrEmpty(chart.Title) ? chart.Title : $"Chart {chartIndex + 1}";
+        var baseName = !string.IsNullOrEmpty(chart.Title)
+            ? SanitizeXmlString(chart.Title)
+            : $"Chart {chartIndex + 1}";
         _writer.WriteAttributeString("name", baseName);
         _writer.WriteEndElement(); // wp:docPr
 

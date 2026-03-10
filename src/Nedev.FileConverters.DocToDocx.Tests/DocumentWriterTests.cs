@@ -1068,6 +1068,42 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void WriteDocument_ShapeTextboxText_IsSanitized_AndPreservesMeaningfulWhitespace()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel
+            {
+                Index = 0,
+                Runs = { new RunModel { Text = "body" } }
+            });
+
+            doc.Shapes.Add(new ShapeModel
+            {
+                Id = 1,
+                Type = ShapeType.Textbox,
+                ParagraphIndexHint = 0,
+                Text = " Box\u0001\uFFFD text "
+            });
+
+            string xml;
+            using (var ms = new MemoryStream())
+            {
+                var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true };
+                using var writer = XmlWriter.Create(ms, settings);
+                var dw = new DocumentWriter(writer);
+                dw.WriteDocument(doc);
+                writer.Flush();
+                xml = Encoding.UTF8.GetString(ms.ToArray());
+            }
+
+            Assert.Contains("xml:space=\"preserve\"", xml);
+            Assert.Contains("> Box  text </w:t>", xml);
+
+            using var reader = XmlReader.Create(new StringReader(xml.TrimStart('\uFEFF')));
+            while (reader.Read()) { }
+        }
+
+        [Fact]
         public void WriteDocument_FirstAndEvenHeaders_EnableSectionSemantics()
         {
             var doc = new DocumentModel();

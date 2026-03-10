@@ -26,7 +26,6 @@ public class ChartsWriter
         _writer.WriteStartDocument();
         _writer.WriteStartElement("c", "chartSpace", cNs);
 
-        // Namespaces
         _writer.WriteAttributeString("xmlns", "c", null, cNs);
         _writer.WriteAttributeString("xmlns", "a", null, aNs);
         _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
@@ -35,10 +34,12 @@ public class ChartsWriter
         _writer.WriteAttributeString("val", "en-US");
         _writer.WriteEndElement();
 
-        // Chart properties (very minimal)
+        _writer.WriteStartElement("c", "roundedCorners", cNs);
+        _writer.WriteAttributeString("val", "0");
+        _writer.WriteEndElement();
+
         _writer.WriteStartElement("c", "chart", cNs);
 
-        // Title (optional)
         if (!string.IsNullOrEmpty(chart.Title))
         {
             WriteRichTextElement("title", chart.Title, cNs, aNs);
@@ -50,9 +51,6 @@ public class ChartsWriter
             _writer.WriteEndElement();
         }
 
-        // Plot area with a single chart type. For most chart types we use a
-        // simple category/value axis layout. Pie‑like charts do not require axes
-        // or cat/val elements, but the series data itself is still written.
         _writer.WriteStartElement("c", "plotArea", cNs);
         _writer.WriteStartElement("c", GetChartElementName(chart.Type), cNs);
 
@@ -70,24 +68,22 @@ public class ChartsWriter
             WriteAxisReferences(cNs);
         }
 
-        _writer.WriteEndElement(); // c:chartType
+        _writer.WriteEndElement();
 
-        // Axes (catAx + valAx) with default ids; omit for pie/doughnut
         if (!isPie)
         {
             WriteDefaultAxes(chart);
         }
 
-        _writer.WriteEndElement(); // c:plotArea
+        _writer.WriteEndElement();
 
-        // Legend (optional simple right-side legend)
         if (chart.ShowLegend)
         {
             _writer.WriteStartElement("c", "legend", cNs);
             _writer.WriteStartElement("c", "legendPos", cNs);
             _writer.WriteAttributeString("val", "r");
-            _writer.WriteEndElement(); // c:legendPos
-            _writer.WriteEndElement(); // c:legend
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
         }
 
         _writer.WriteStartElement("c", "plotVisOnly", cNs);
@@ -98,36 +94,29 @@ public class ChartsWriter
         _writer.WriteAttributeString("val", "gap");
         _writer.WriteEndElement();
 
-        _writer.WriteEndElement(); // c:chart
-        _writer.WriteEndElement(); // c:chartSpace
+        _writer.WriteEndElement();
+        _writer.WriteEndElement();
         _writer.WriteEndDocument();
     }
 
-    // made internal so that unit tests can verify mapping without needing to
-    // drive the entire writer.
     public static string GetChartElementName(ChartType type) => type switch
     {
         ChartType.Line => "lineChart",
         ChartType.Bar => "barChart",
-        ChartType.Column => "barChart", // column is semantically a clustered bar in CT
+        ChartType.Column => "barChart",
         ChartType.Pie => "pieChart",
         ChartType.Doughnut => "doughnutChart",
         ChartType.Area => "areaChart",
         ChartType.Scatter => "scatterChart",
         ChartType.Radar => "radarChart",
-        _ => "barChart" // fallback to something reasonable
+        _ => "barChart"
     };
 
-    /// <summary>
-    /// Writes c:catAx and c:valAx with fixed ids (1 and 2). This is enough for
-    /// Word to treat the part as a valid chart with category/value axes.
-    /// </summary>
     private void WriteDefaultAxes(ChartModel chart)
     {
         const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
         const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
-        // Category axis
         _writer.WriteStartElement("c", "catAx", cNs);
         _writer.WriteStartElement("c", "axId", cNs);
         _writer.WriteAttributeString("val", "1");
@@ -140,16 +129,24 @@ public class ChartsWriter
         _writer.WriteStartElement("c", "axPos", cNs);
         _writer.WriteAttributeString("val", "b");
         _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "delete", cNs);
+        _writer.WriteAttributeString("val", "0");
+        _writer.WriteEndElement();
         if (!string.IsNullOrEmpty(chart.CategoryAxisTitle))
         {
             WriteRichTextElement("title", chart.CategoryAxisTitle, cNs, aNs);
         }
+        _writer.WriteStartElement("c", "tickLblPos", cNs);
+        _writer.WriteAttributeString("val", "nextTo");
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "lblOffset", cNs);
+        _writer.WriteAttributeString("val", "100");
+        _writer.WriteEndElement();
         _writer.WriteStartElement("c", "crossAx", cNs);
         _writer.WriteAttributeString("val", "2");
         _writer.WriteEndElement();
-        _writer.WriteEndElement(); // c:catAx
+        _writer.WriteEndElement();
 
-        // Value axis
         _writer.WriteStartElement("c", "valAx", cNs);
         _writer.WriteStartElement("c", "axId", cNs);
         _writer.WriteAttributeString("val", "2");
@@ -162,14 +159,28 @@ public class ChartsWriter
         _writer.WriteStartElement("c", "axPos", cNs);
         _writer.WriteAttributeString("val", "l");
         _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "delete", cNs);
+        _writer.WriteAttributeString("val", "0");
+        _writer.WriteEndElement();
         if (!string.IsNullOrEmpty(chart.ValueAxisTitle))
         {
             WriteRichTextElement("title", chart.ValueAxisTitle, cNs, aNs);
         }
+        _writer.WriteStartElement("c", "majorGridlines", cNs);
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "tickLblPos", cNs);
+        _writer.WriteAttributeString("val", "nextTo");
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "crosses", cNs);
+        _writer.WriteAttributeString("val", "autoZero");
+        _writer.WriteEndElement();
+        _writer.WriteStartElement("c", "crossBetween", cNs);
+        _writer.WriteAttributeString("val", "between");
+        _writer.WriteEndElement();
         _writer.WriteStartElement("c", "crossAx", cNs);
         _writer.WriteAttributeString("val", "1");
         _writer.WriteEndElement();
-        _writer.WriteEndElement(); // c:valAx
+        _writer.WriteEndElement();
     }
 
     private void WriteChartTypeOptions(ChartModel chart, string cNs)
@@ -178,30 +189,51 @@ public class ChartsWriter
         {
             case ChartType.Bar:
             case ChartType.Column:
+                WriteBoolValElement("c", "varyColors", cNs, false);
                 _writer.WriteStartElement("c", "barDir", cNs);
                 _writer.WriteAttributeString("val", chart.Type == ChartType.Bar ? "bar" : "col");
                 _writer.WriteEndElement();
+                _writer.WriteStartElement("c", "grouping", cNs);
+                _writer.WriteAttributeString("val", "clustered");
+                _writer.WriteEndElement();
+                _writer.WriteStartElement("c", "gapWidth", cNs);
+                _writer.WriteAttributeString("val", "150");
+                _writer.WriteEndElement();
+                _writer.WriteStartElement("c", "overlap", cNs);
+                _writer.WriteAttributeString("val", "0");
+                _writer.WriteEndElement();
                 break;
             case ChartType.Line:
+                WriteBoolValElement("c", "varyColors", cNs, false);
+                _writer.WriteStartElement("c", "grouping", cNs);
+                _writer.WriteAttributeString("val", "standard");
+                _writer.WriteEndElement();
+                WriteBoolValElement("c", "marker", cNs, false);
+                WriteBoolValElement("c", "smooth", cNs, false);
+                break;
             case ChartType.Area:
+                WriteBoolValElement("c", "varyColors", cNs, false);
                 _writer.WriteStartElement("c", "grouping", cNs);
                 _writer.WriteAttributeString("val", "standard");
                 _writer.WriteEndElement();
                 break;
             case ChartType.Scatter:
+                WriteBoolValElement("c", "varyColors", cNs, false);
                 _writer.WriteStartElement("c", "scatterStyle", cNs);
                 _writer.WriteAttributeString("val", "lineMarker");
                 _writer.WriteEndElement();
                 break;
             case ChartType.Radar:
+                WriteBoolValElement("c", "varyColors", cNs, false);
                 _writer.WriteStartElement("c", "radarStyle", cNs);
                 _writer.WriteAttributeString("val", "standard");
                 _writer.WriteEndElement();
                 break;
             case ChartType.Pie:
             case ChartType.Doughnut:
-                _writer.WriteStartElement("c", "varyColors", cNs);
-                _writer.WriteAttributeString("val", "1");
+                WriteBoolValElement("c", "varyColors", cNs, true);
+                _writer.WriteStartElement("c", "firstSliceAng", cNs);
+                _writer.WriteAttributeString("val", "0");
                 _writer.WriteEndElement();
                 if (chart.Type == ChartType.Doughnut)
                 {
@@ -235,9 +267,7 @@ public class ChartsWriter
         _writer.WriteEndElement();
         _writer.WriteStartElement("a", "p", aNs);
         _writer.WriteStartElement("a", "r", aNs);
-        _writer.WriteStartElement("a", "t", aNs);
-        _writer.WriteString(text);
-        _writer.WriteEndElement();
+        WriteTextElement("a", "t", aNs, text);
         _writer.WriteEndElement();
         _writer.WriteEndElement();
         _writer.WriteEndElement();
@@ -245,52 +275,40 @@ public class ChartsWriter
         _writer.WriteEndElement();
     }
 
-    /// <summary>
-    /// Writes a minimal c:cat element with inline string categories.
-    /// </summary>
     private void WriteCategoryAxisData(ChartModel chart)
     {
-        const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
-
         var categories = chart.Categories;
         if (categories.Count == 0)
         {
             categories = new List<string> { "Category 1", "Category 2", "Category 3" };
         }
-
-        // Category axis data is written per series in c:cat, but when using
-        // inline data it is sufficient to emit s:pt entries alongside series.
-        // We handle per-series cats in WriteSeriesData, so nothing to do here.
     }
 
-    /// <summary>
-    /// Writes all series and their values. We emit inline categories/values
-    /// rather than external references to a worksheet.
-    /// </summary>
     private void WriteSeriesData(ChartModel chart)
     {
         const string cNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
-        const string aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
         var categories = chart.Categories.Count > 0
             ? chart.Categories
             : new List<string> { "Category 1", "Category 2", "Category 3" };
 
-        if (chart.Series.Count == 0)
-        {
-            chart.Series.Add(new ChartSeries
+        IReadOnlyList<ChartSeries> seriesList = chart.Series.Count > 0
+            ? chart.Series
+            : new[]
             {
-                Name = "Series 1",
-                Values = new List<double> { 1, 2, 3 }
-            });
-        }
+                new ChartSeries
+                {
+                    Name = "Series 1",
+                    Values = new List<double> { 1, 2, 3 }
+                }
+            };
 
-        for (int s = 0; s < chart.Series.Count; s++)
+        for (int s = 0; s < seriesList.Count; s++)
         {
-            var series = chart.Series[s];
+            var series = seriesList[s];
+            var seriesName = !string.IsNullOrWhiteSpace(series.Name) ? series.Name : $"Series {s + 1}";
             _writer.WriteStartElement("c", "ser", cNs);
 
-            // Index and order
             _writer.WriteStartElement("c", "idx", cNs);
             _writer.WriteAttributeString("val", s.ToString());
             _writer.WriteEndElement();
@@ -298,56 +316,46 @@ public class ChartsWriter
             _writer.WriteAttributeString("val", s.ToString());
             _writer.WriteEndElement();
 
-            // Series name
-            if (!string.IsNullOrEmpty(series.Name))
-            {
-                _writer.WriteStartElement("c", "tx", cNs);
-                _writer.WriteStartElement("c", "strRef", cNs);
-                _writer.WriteStartElement("c", "strCache", cNs);
-                _writer.WriteStartElement("c", "ptCount", cNs);
-                _writer.WriteAttributeString("val", "1");
-                _writer.WriteEndElement(); // c:ptCount
-                _writer.WriteStartElement("c", "pt", cNs);
-                _writer.WriteAttributeString("idx", "0");
-                _writer.WriteStartElement("c", "v", cNs);
-                _writer.WriteString(series.Name);
-                _writer.WriteEndElement(); // c:v
-                _writer.WriteEndElement(); // c:pt
-                _writer.WriteEndElement(); // c:strCache
-                _writer.WriteEndElement(); // c:strRef
-                _writer.WriteEndElement(); // c:tx
-            }
+            _writer.WriteStartElement("c", "tx", cNs);
+            _writer.WriteStartElement("c", "strRef", cNs);
+            _writer.WriteStartElement("c", "strCache", cNs);
+            _writer.WriteStartElement("c", "ptCount", cNs);
+            _writer.WriteAttributeString("val", "1");
+            _writer.WriteEndElement();
+            _writer.WriteStartElement("c", "pt", cNs);
+            _writer.WriteAttributeString("idx", "0");
+            WriteTextElement("c", "v", cNs, seriesName);
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
 
-            // Categories (string cache)
+            WriteBoolValElement("c", "invertIfNegative", cNs, false);
+
             _writer.WriteStartElement("c", "cat", cNs);
             _writer.WriteStartElement("c", "strRef", cNs);
             _writer.WriteStartElement("c", "strCache", cNs);
             _writer.WriteStartElement("c", "ptCount", cNs);
             _writer.WriteAttributeString("val", categories.Count.ToString());
-            _writer.WriteEndElement(); // c:ptCount
+            _writer.WriteEndElement();
             for (int i = 0; i < categories.Count; i++)
             {
                 _writer.WriteStartElement("c", "pt", cNs);
                 _writer.WriteAttributeString("idx", i.ToString());
-                _writer.WriteStartElement("c", "v", cNs);
-                _writer.WriteString(categories[i]);
-                _writer.WriteEndElement(); // c:v
-                _writer.WriteEndElement(); // c:pt
+                WriteTextElement("c", "v", cNs, categories[i]);
+                _writer.WriteEndElement();
             }
-            _writer.WriteEndElement(); // c:strCache
-            _writer.WriteEndElement(); // c:strRef
-            _writer.WriteEndElement(); // c:cat
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
 
-            // Values (number cache)
             _writer.WriteStartElement("c", "val", cNs);
             _writer.WriteStartElement("c", "numRef", cNs);
             _writer.WriteStartElement("c", "numCache", cNs);
 
-            // Align value count with categories
             var values = series.Values;
             if (values.Count < categories.Count)
             {
-                // pad with zeros
                 var padded = new List<double>(values);
                 while (padded.Count < categories.Count)
                     padded.Add(0);
@@ -360,7 +368,7 @@ public class ChartsWriter
 
             _writer.WriteStartElement("c", "ptCount", cNs);
             _writer.WriteAttributeString("val", values.Count.ToString());
-            _writer.WriteEndElement(); // c:ptCount
+            _writer.WriteEndElement();
 
             for (int i = 0; i < values.Count; i++)
             {
@@ -368,16 +376,41 @@ public class ChartsWriter
                 _writer.WriteAttributeString("idx", i.ToString());
                 _writer.WriteStartElement("c", "v", cNs);
                 _writer.WriteString(values[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
-                _writer.WriteEndElement(); // c:v
-                _writer.WriteEndElement(); // c:pt
+                _writer.WriteEndElement();
+                _writer.WriteEndElement();
             }
 
-            _writer.WriteEndElement(); // c:numCache
-            _writer.WriteEndElement(); // c:numRef
-            _writer.WriteEndElement(); // c:val
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
+            _writer.WriteEndElement();
 
-            _writer.WriteEndElement(); // c:ser
+            _writer.WriteEndElement();
         }
+    }
+
+    private void WriteTextElement(string prefix, string localName, string ns, string? text)
+    {
+        var safeText = DocumentWriter.SanitizeXmlString(text ?? string.Empty);
+        _writer.WriteStartElement(prefix, localName, ns);
+        if (NeedsSpacePreserve(safeText))
+        {
+            _writer.WriteAttributeString("xml", "space", "http://www.w3.org/XML/1998/namespace", "preserve");
+        }
+        _writer.WriteString(safeText);
+        _writer.WriteEndElement();
+    }
+
+    private void WriteBoolValElement(string prefix, string localName, string ns, bool value)
+    {
+        _writer.WriteStartElement(prefix, localName, ns);
+        _writer.WriteAttributeString("val", value ? "1" : "0");
+        _writer.WriteEndElement();
+    }
+
+    private static bool NeedsSpacePreserve(string text)
+    {
+        return !string.IsNullOrEmpty(text)
+            && (char.IsWhiteSpace(text[0]) || char.IsWhiteSpace(text[text.Length - 1]) || text.Contains("  "));
     }
 }
 

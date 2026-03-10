@@ -99,6 +99,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             string xml = Encoding.UTF8.GetString(ms.ToArray());
 
             Assert.Contains("<c:doughnutChart", xml);
+            Assert.Contains("<c:firstSliceAng val=\"0\"", xml);
             Assert.Contains("<c:holeSize val=\"50\"", xml);
             Assert.DoesNotContain("<c:legend>", xml);
         }
@@ -124,6 +125,101 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Contains("<c:dispBlanksAs val=\"gap\"", xml);
             Assert.True(xml.Split("<c:axId val=\"1\"", StringSplitOptions.None).Length >= 3);
             Assert.True(xml.Split("<c:axId val=\"2\"", StringSplitOptions.None).Length >= 3);
+        }
+
+        [Fact]
+        public void WriteChart_BarChart_EmitsClusteredAndAxisDefaults()
+        {
+            var model = new ChartModel
+            {
+                Type = ChartType.Bar,
+                Categories = new List<string> { "A", "B" },
+                Series = { new ChartSeries { Name = "S", Values = new List<double> { 1, 2 } } }
+            };
+
+            using var ms = new MemoryStream();
+            using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer).WriteChart(model);
+            writer.Flush();
+            string xml = Encoding.UTF8.GetString(ms.ToArray());
+
+            Assert.Contains("<c:roundedCorners val=\"0\"", xml);
+            Assert.Contains("<c:varyColors val=\"0\"", xml);
+            Assert.Contains("<c:grouping val=\"clustered\"", xml);
+            Assert.Contains("<c:gapWidth val=\"150\"", xml);
+            Assert.Contains("<c:overlap val=\"0\"", xml);
+            Assert.Contains("<c:delete val=\"0\"", xml);
+            Assert.Contains("<c:tickLblPos val=\"nextTo\"", xml);
+            Assert.Contains("<c:lblOffset val=\"100\"", xml);
+            Assert.Contains("<c:majorGridlines", xml);
+            Assert.Contains("<c:crosses val=\"autoZero\"", xml);
+            Assert.Contains("<c:crossBetween val=\"between\"", xml);
+        }
+
+        [Fact]
+        public void WriteChart_LineChart_SanitizesTextAndEmitsLineDefaults()
+        {
+            var model = new ChartModel
+            {
+                Type = ChartType.Line,
+                Title = " Sales\u0001 Report ",
+                CategoryAxisTitle = " Quarter\u0001 ",
+                ValueAxisTitle = " Revenue\uFFFD ",
+                Categories = new List<string> { " Q1 ", "Q2\u0001" },
+                Series = { new ChartSeries { Name = " North\u0001 ", Values = new List<double> { 1, 2 } } }
+            };
+
+            using var ms = new MemoryStream();
+            using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer).WriteChart(model);
+            writer.Flush();
+            string xml = Encoding.UTF8.GetString(ms.ToArray());
+
+            Assert.Contains("<c:marker val=\"0\"", xml);
+            Assert.Contains("<c:smooth val=\"0\"", xml);
+            Assert.Contains("xml:space=\"preserve\"", xml);
+            Assert.Contains(" Sales Report ", xml);
+            Assert.Contains(" Quarter ", xml);
+            Assert.Contains(" Revenue  ", xml);
+            Assert.Contains(" North ", xml);
+            Assert.Contains(" Q1 ", xml);
+
+            using var reader = XmlReader.Create(new StringReader(xml.TrimStart('\uFEFF')));
+            while (reader.Read()) { }
+        }
+
+        [Fact]
+        public void WriteChart_DoesNotMutateSourceSeries_AndFallsBackForBlankSeriesNames()
+        {
+            var emptyModel = new ChartModel
+            {
+                Type = ChartType.Column,
+                Categories = new List<string> { "A", "B", "C" }
+            };
+
+            using (var ms = new MemoryStream())
+            using (var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 }))
+            {
+                new ChartsWriter(writer).WriteChart(emptyModel);
+                writer.Flush();
+            }
+
+            Assert.Empty(emptyModel.Series);
+
+            var blankNameModel = new ChartModel
+            {
+                Type = ChartType.Column,
+                Categories = new List<string> { "A" },
+                Series = { new ChartSeries { Name = " ", Values = new List<double> { 1 } } }
+            };
+
+            using var ms2 = new MemoryStream();
+            using var writer2 = XmlWriter.Create(ms2, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+            new ChartsWriter(writer2).WriteChart(blankNameModel);
+            writer2.Flush();
+            string xml = Encoding.UTF8.GetString(ms2.ToArray());
+
+            Assert.Contains(">Series 1</c:v>", xml);
         }
     }
 }

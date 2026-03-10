@@ -52,6 +52,26 @@ This backlog turns the current audit findings into a practical implementation or
 13. Reused shared XML text sanitization for simple header/footer text fallback.
 14. Added chart `axId` references plus `autoTitleDeleted`/`plotVisOnly`/`dispBlanksAs` defaults for more stable Word chart parts.
 15. Replaced the remaining `TableReader` debug-log cleanup bare catch with a debug trace.
+16. Added `c:roundedCorners val="0"` to generated chart spaces for more explicit chart defaults.
+17. Sanitized chart titles before emitting DrawingML rich text.
+18. Preserved meaningful whitespace in chart rich text with `xml:space="preserve"`.
+19. Added non-pie `varyColors="0"` defaults for bar/line/area/scatter/radar charts.
+20. Added clustered grouping defaults for bar and column charts.
+21. Added bar/column `gapWidth="150"` defaults.
+22. Added bar/column `overlap="0"` defaults.
+23. Added line-chart `marker="0"` defaults.
+24. Added line-chart `smooth="0"` defaults.
+25. Added pie/doughnut `firstSliceAng="0"` default output.
+26. Added category-axis `delete="0"` defaults.
+27. Added category-axis `tickLblPos="nextTo"` and `lblOffset="100"` defaults.
+28. Added value-axis `delete="0"`, `majorGridlines`, and `tickLblPos="nextTo"` defaults.
+29. Added value-axis `crosses="autoZero"` and `crossBetween="between"` defaults.
+30. Stopped mutating input `ChartModel.Series` when synthesizing fallback chart data.
+31. Added fallback synthetic series names when a recovered series name is blank.
+32. Sanitized series captions and category labels before writing chart caches.
+33. Added `invertIfNegative="0"` defaults for chart series.
+34. Sanitized chart inline drawing `docPr` names derived from chart titles.
+35. Sanitized shape textbox text through the shared XML sanitizer and only preserve whitespace when needed.
 
 ## P2
 
