@@ -596,14 +596,14 @@ public class TableReader
 
             if (nestedTable != null)
             {
-                rebuiltTables.Add(BuildNestedSectionTable(nestedTable));
+                rebuiltTables.Add(BuildNestedSectionTable(nestedTable, currentParagraph.Index + 1));
                 consumedTables.Add(nestedTable);
                 continue;
             }
 
             if (placeholderChild != null)
             {
-                rebuiltTables.Add(BuildNestedSectionTable(placeholderChild));
+                rebuiltTables.Add(BuildNestedSectionTable(placeholderChild, currentParagraph.Index + 1));
             }
         }
 
@@ -714,7 +714,7 @@ public class TableReader
         return Math.Min(3, markerCount);
     }
 
-    private static TableModel BuildNestedSectionTable(TableModel childTable)
+    private static TableModel BuildNestedSectionTable(TableModel childTable, int startParagraphIndex)
     {
         int columnCount = 2;
         int rowCount = 2;
@@ -723,7 +723,7 @@ public class TableReader
 
         var parentTable = new TableModel
         {
-            StartParagraphIndex = childTable.StartParagraphIndex,
+            StartParagraphIndex = Math.Min(childTable.StartParagraphIndex, Math.Max(0, startParagraphIndex)),
             EndParagraphIndex = childTable.EndParagraphIndex,
             ColumnCount = columnCount,
             RowCount = rowCount,

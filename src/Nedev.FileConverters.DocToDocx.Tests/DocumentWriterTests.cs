@@ -1819,6 +1819,43 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void SampleTableDoc_Conversion_PlacesNestedTableImmediatelyAfterTitle()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "table.doc");
+            var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+            try
+            {
+                DocToDocxConverter.Convert(inputPath, outputPath);
+
+                using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
+                var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
+                var xDocument = XDocument.Parse(documentXml);
+                XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                var bodyElements = xDocument.Root?
+                    .Element(w + "body")?
+                    .Elements()
+                    .ToList();
+
+                Assert.NotNull(bodyElements);
+
+                var titleIndex = bodyElements!.FindIndex(element =>
+                    element.Name == w + "p" &&
+                    string.Concat(element.Descendants(w + "t").Select(text => text.Value)).Contains("表格嵌套", StringComparison.Ordinal));
+
+                Assert.True(titleIndex >= 0, "Expected converted document to contain the 表格嵌套 paragraph.");
+                Assert.True(titleIndex + 1 < bodyElements.Count, "Expected a body element after the 表格嵌套 paragraph.");
+                Assert.Equal(w + "tbl", bodyElements[titleIndex + 1].Name);
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
+
+        [Fact]
         public void SampleImageDoc_Conversion_PreservesImagePartsAndDrawings()
         {
             var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
