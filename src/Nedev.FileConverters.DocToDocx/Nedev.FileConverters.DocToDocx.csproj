@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Nedev</Authors>
     <RootNamespace>Nedev.FileConverters.DocToDocx</RootNamespace>
     <AssemblyName>Nedev.FileConverters.DocToDocx</AssemblyName>
