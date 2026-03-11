@@ -500,9 +500,12 @@ public class DocToDocxConverterTests
         var style = document.Styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == paragraph.Properties!.StyleIndex);
         Assert.NotNull(style);
         Assert.Equal("Title", style!.Name);
-        Assert.Equal(ParagraphAlignment.Center, paragraph.Properties.Alignment);
+        Assert.Equal(ParagraphAlignment.Left, paragraph.Properties.Alignment);
+        Assert.Equal(52, style.RunProperties?.FontSize);
+        Assert.Equal(52, style.RunProperties?.FontSizeCs);
         Assert.Equal("Ubuntu", style.RunProperties?.FontName);
         Assert.Contains(paragraph.Runs, run => string.Equals(run.Properties?.FontName, "Ubuntu", StringComparison.Ordinal));
+        Assert.Contains(paragraph.Runs, run => run.Properties?.FontSize == 52);
     }
 
     [Fact]
@@ -531,10 +534,15 @@ public class DocToDocxConverterTests
 
             Assert.NotNull(paragraph);
             Assert.Equal("Title", (string?)paragraph!.Element(w + "pPr")?.Element(w + "pStyle")?.Attribute(w + "val"));
-            Assert.Equal("center", (string?)paragraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val"));
+            Assert.True(string.IsNullOrEmpty((string?)paragraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")) ||
+                        string.Equals((string?)paragraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val"), "left", StringComparison.Ordinal));
             Assert.Equal("Ubuntu", (string?)paragraph.Descendants(w + "rFonts").FirstOrDefault()?.Attribute(w + "ascii"));
+            Assert.Equal("52", (string?)paragraph.Descendants(w + "sz").FirstOrDefault()?.Attribute(w + "val"));
             Assert.NotNull(titleStyle);
             Assert.Equal("Ubuntu", (string?)titleStyle!.Descendants(w + "rFonts").FirstOrDefault()?.Attribute(w + "ascii"));
+            Assert.Equal("52", (string?)titleStyle.Descendants(w + "sz").FirstOrDefault()?.Attribute(w + "val"));
+            Assert.True(string.IsNullOrEmpty((string?)titleStyle.Descendants(w + "jc").FirstOrDefault()?.Attribute(w + "val")) ||
+                        string.Equals((string?)titleStyle.Descendants(w + "jc").FirstOrDefault()?.Attribute(w + "val"), "left", StringComparison.Ordinal));
         }
         finally
         {
@@ -700,6 +708,9 @@ public class DocToDocxConverterTests
         Assert.Equal(13, table.Rows[1].Cells.Count);
         Assert.Equal(new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }, table.Rows[1].Cells.Where((_, index) => index % 2 == 0).Select(cell => cell.Paragraphs[0].Text));
         Assert.All(table.Rows[1].Cells.Where((_, index) => index % 2 == 1), cell => Assert.True(string.IsNullOrEmpty(cell.Paragraphs[0].Text)));
+        Assert.All(table.Rows[1].Cells, cell => Assert.Equal(1, cell.RowSpan));
+        Assert.Equal(1, table.Rows[2].Cells[0].RowSpan);
+        Assert.Equal(1, table.Rows[3].Cells[0].RowSpan);
 
         Assert.Equal("1", table.Rows[2].Cells[12].Paragraphs[0].Text);
         Assert.All(table.Rows[3].Cells, cell => Assert.True(string.IsNullOrEmpty(cell.Paragraphs[0].Text)));
@@ -727,16 +738,28 @@ public class DocToDocxConverterTests
                 .First(tbl => string.Equals(string.Concat(tbl.Descendants(w + "t").Take(1).Select(t => (string?)t)), "December 2007", StringComparison.Ordinal));
 
             Assert.Equal(13, table.Element(w + "tblGrid")!.Elements(w + "gridCol").Count());
+            var gridWidths = table.Element(w + "tblGrid")!.Elements(w + "gridCol")
+                .Select(col => int.Parse((string?)col.Attribute(w + "w") ?? "0", System.Globalization.CultureInfo.InvariantCulture))
+                .ToList();
+            Assert.All(gridWidths, width => Assert.True(width > 0));
+            Assert.All(Enumerable.Range(0, 6), index => Assert.True(gridWidths[index * 2] > gridWidths[(index * 2) + 1]));
 
             var rows = table.Elements(w + "tr").ToList();
             Assert.Equal(13, rows.Count);
+            Assert.Empty(table.Descendants(w + "vMerge"));
 
             var firstRowCells = rows[0].Elements(w + "tc").ToList();
             var mergedTitleCell = Assert.Single(firstRowCells);
             Assert.Equal("13", (string?)mergedTitleCell.Element(w + "tcPr")?.Element(w + "gridSpan")?.Attribute(w + "val"));
+            Assert.Equal(gridWidths.Sum().ToString(System.Globalization.CultureInfo.InvariantCulture), (string?)mergedTitleCell.Element(w + "tcPr")?.Element(w + "tcW")?.Attribute(w + "w"));
             Assert.Equal("December 2007", string.Concat(mergedTitleCell.Descendants(w + "t").Select(t => (string?)t)));
 
             Assert.Equal(13, rows[1].Elements(w + "tc").Count());
+            var headerCellWidths = rows[1].Elements(w + "tc")
+                .Select(tc => int.Parse((string?)tc.Element(w + "tcPr")?.Element(w + "tcW")?.Attribute(w + "w") ?? "0", System.Globalization.CultureInfo.InvariantCulture))
+                .ToList();
+            Assert.All(headerCellWidths, width => Assert.True(width > 0));
+            Assert.All(Enumerable.Range(0, 6), index => Assert.True(headerCellWidths[index * 2] > headerCellWidths[(index * 2) + 1]));
 
             var headerTexts = rows[1]
                 .Elements(w + "tc")
