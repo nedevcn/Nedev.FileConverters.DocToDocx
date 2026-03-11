@@ -33,6 +33,7 @@ public class DocumentModel
     public ThemeModel Theme { get; set; } = new();
     public List<NumberingDefinition> NumberingDefinitions { get; set; } = new();
     public List<ListFormat> ListFormats { get; set; } = new();
+    public List<ListFormatOverride> ListFormatOverrides { get; set; } = new();
     public List<string> RevisionAuthors { get; set; } = new();
 }
 
@@ -115,6 +116,7 @@ public class DocumentProperties
 /// </summary>
 public class SectionInfo
 {
+    public int SectionIndex { get; set; } = -1;
     public int StartCp { get; set; }
     public int EndCp { get; set; }
     public int StartParagraphIndex { get; set; }
@@ -129,10 +131,12 @@ public class SectionInfo
     public int Gutter { get; set; }
     public bool IsLandscape { get; set; }
     public byte BreakCode { get; set; } // SBkc
+    public bool TitlePage { get; set; }
     public short ColumnCount { get; set; } = 1;
     public int ColumnSpacing { get; set; }
     public int DocGridLinePitch { get; set; }
     public byte VerticalAlignment { get; set; } // SVjc
+    public int? PageNumberStart { get; set; }
     public HeaderFooterReferenceType HeaderReference { get; set; } = HeaderFooterReferenceType.Default;
     public HeaderFooterReferenceType FooterReference { get; set; } = HeaderFooterReferenceType.Default;
 }

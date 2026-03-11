@@ -153,7 +153,7 @@ public class ZipWriter : IDisposable
         {
             // Dictionary to map font name to relationship ID for fontTable.xml
             var fontRelIds = new Dictionary<string, string>();
-            var fontRels = new List<(string rId, string Target)>();
+            var fontRels = new List<(string rId, string Type, string Target)>();
             
             for (int i = 0; i < embeddedFonts.Count; i++)
             {
@@ -167,7 +167,7 @@ public class ZipWriter : IDisposable
                 var obfuscatedData = FontObfuscator.ObfuscateFont(font.EmbeddedData, fontKey);
                 
                 string fontFilePath = $"fonts/font{i + 1}.odttf";
-                fontRels.Add((rId, fontFilePath));
+                fontRels.Add((rId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font", fontFilePath));
                 
                 AddBinaryEntry($"word/{fontFilePath}", obfuscatedData);
             }
@@ -297,77 +297,42 @@ public class ZipWriter : IDisposable
     
     /// <summary>
     /// Writes headers and footers to the archive.
-    /// Generates up to three header parts (header1/2/3.xml) and three footer
-    /// parts (footer1/2/3.xml) corresponding to First/Odd/Even.
     /// </summary>
     private void WriteHeadersAndFooters(DocumentModel document)
     {
-        var headers = document.HeadersFooters.Headers;
-        var footers = document.HeadersFooters.Footers;
-
-        // HeaderFirst -> header1.xml
-        var headerFirst = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
-        if (headerFirst != null)
+        foreach (var header in RelationshipsWriter.GetUsableHeaderParts(document))
         {
-            AddXmlEntry("word/header1.xml", w =>
+            var (partRels, imageMap, oleMap) = BuildHeaderFooterPartRels(document, header);
+            if (partRels.Count > 0 && !string.IsNullOrEmpty(header.PartName))
+            {
+                AddXmlEntry($"word/_rels/{header.PartName}.rels", w => WritePartRels(w, partRels));
+            }
+
+            if (string.IsNullOrEmpty(header.PartName))
+                continue;
+
+            AddXmlEntry($"word/{header.PartName}", w =>
             {
                 var writer = new HeaderFooterWriter(w);
-                writer.WriteHeader(headerFirst, document);
+                writer.WriteHeader(header, document, imageMap, oleMap);
             });
         }
 
-        // HeaderOdd (default) -> header2.xml
-        var headerOdd = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
-        if (headerOdd != null)
+        foreach (var footer in RelationshipsWriter.GetUsableFooterParts(document))
         {
-            AddXmlEntry("word/header2.xml", w =>
+            var (partRels, imageMap, oleMap) = BuildHeaderFooterPartRels(document, footer);
+            if (partRels.Count > 0 && !string.IsNullOrEmpty(footer.PartName))
             {
-                var writer = new HeaderFooterWriter(w);
-                writer.WriteHeader(headerOdd, document);
-            });
-        }
+                AddXmlEntry($"word/_rels/{footer.PartName}.rels", w => WritePartRels(w, partRels));
+            }
 
-        // HeaderEven -> header3.xml
-        var headerEven = headers.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
-        if (headerEven != null)
-        {
-            AddXmlEntry("word/header3.xml", w =>
-            {
-                var writer = new HeaderFooterWriter(w);
-                writer.WriteHeader(headerEven, document);
-            });
-        }
+            if (string.IsNullOrEmpty(footer.PartName))
+                continue;
 
-        // FooterFirst -> footer1.xml
-        var footerFirst = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
-        if (footerFirst != null)
-        {
-            AddXmlEntry("word/footer1.xml", w =>
+            AddXmlEntry($"word/{footer.PartName}", w =>
             {
                 var writer = new HeaderFooterWriter(w);
-                writer.WriteFooter(footerFirst, document);
-            });
-        }
-
-        // FooterOdd (default) -> footer2.xml
-        var footerOdd = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
-        if (footerOdd != null)
-        {
-            AddXmlEntry("word/footer2.xml", w =>
-            {
-                var writer = new HeaderFooterWriter(w);
-                writer.WriteFooter(footerOdd, document);
-            });
-        }
-
-        // FooterEven -> footer3.xml
-        var footerEven = footers.FirstOrDefault(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
-        if (footerEven != null)
-        {
-            AddXmlEntry("word/footer3.xml", w =>
-            {
-                var writer = new HeaderFooterWriter(w);
-                writer.WriteFooter(footerEven, document);
+                writer.WriteFooter(footer, document, imageMap, oleMap);
             });
         }
     }
@@ -409,7 +374,7 @@ public class ZipWriter : IDisposable
     /// <summary>
     /// Collects image indices used in notes and builds (rels entries, imageIndex -> rId map).
     /// </summary>
-    private static (List<(string rId, string Target)> rels, Dictionary<int, string> imageIndexToRelId) BuildNotePartImageRels(DocumentModel document, List<NoteModelBase> notes)
+    private static (List<(string rId, string Type, string Target)> rels, Dictionary<int, string> imageIndexToRelId) BuildNotePartImageRels(DocumentModel document, List<NoteModelBase> notes)
     {
         var order = new List<int>();
         var seen = new HashSet<int>();
@@ -425,28 +390,66 @@ public class ZipWriter : IDisposable
                 }
             }
         }
-        var rels = new List<(string rId, string Target)>();
+        var rels = new List<(string rId, string Type, string Target)>();
         var imageIndexToRelId = new Dictionary<int, string>();
         for (int i = 0; i < order.Count; i++)
         {
             var imageIndex = order[i];
             var ext = GetImageExtension(document.Images[imageIndex].Type);
             var rId = $"rId{i + 1}";
-            rels.Add((rId, $"../media/image{imageIndex + 1}{ext}"));
+            rels.Add((rId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", $"../media/image{imageIndex + 1}{ext}"));
             imageIndexToRelId[imageIndex] = rId;
         }
         return (rels, imageIndexToRelId);
     }
 
-    private static void WritePartRels(XmlWriter w, List<(string rId, string Target)> rels)
+    private static (List<(string rId, string Type, string Target)> rels, Dictionary<int, string> imageIndexToRelId, Dictionary<string, string> oleObjectIdToRelId) BuildHeaderFooterPartRels(DocumentModel document, HeaderFooterModel headerFooter)
+    {
+        var rels = new List<(string rId, string Type, string Target)>();
+        var imageIndexToRelId = new Dictionary<int, string>();
+        var oleObjectIdToRelId = new Dictionary<string, string>(StringComparer.Ordinal);
+        var nextId = 1;
+
+        if (headerFooter.Paragraphs == null)
+            return (rels, imageIndexToRelId, oleObjectIdToRelId);
+
+        foreach (var paragraph in headerFooter.Paragraphs)
+        {
+            foreach (var run in paragraph.Runs)
+            {
+                if (run.ImageIndex >= 0 && run.ImageIndex < document.Images.Count && !imageIndexToRelId.ContainsKey(run.ImageIndex))
+                {
+                    var ext = GetImageExtension(document.Images[run.ImageIndex].Type);
+                    var rId = $"rId{nextId++}";
+                    rels.Add((rId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", $"../media/image{run.ImageIndex + 1}{ext}"));
+                    imageIndexToRelId[run.ImageIndex] = rId;
+                }
+
+                if (run.IsOle && !string.IsNullOrEmpty(run.OleObjectId) && !oleObjectIdToRelId.ContainsKey(run.OleObjectId))
+                {
+                    var oleIndex = document.OleObjects.FindIndex(o => o.ObjectId == run.OleObjectId);
+                    if (oleIndex < 0)
+                        continue;
+
+                    var rId = $"rId{nextId++}";
+                    rels.Add((rId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject", $"../embeddings/oleObject{oleIndex + 1}.bin"));
+                    oleObjectIdToRelId[run.OleObjectId] = rId;
+                }
+            }
+        }
+
+        return (rels, imageIndexToRelId, oleObjectIdToRelId);
+    }
+
+    private static void WritePartRels(XmlWriter w, List<(string rId, string Type, string Target)> rels)
     {
         w.WriteStartDocument();
         w.WriteStartElement("Relationships", "http://schemas.openxmlformats.org/package/2006/relationships");
-        foreach (var (rId, target) in rels)
+        foreach (var (rId, type, target) in rels)
         {
             w.WriteStartElement("Relationship", "http://schemas.openxmlformats.org/package/2006/relationships");
             w.WriteAttributeString("Id", rId);
-            w.WriteAttributeString("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image");
+            w.WriteAttributeString("Type", type);
             w.WriteAttributeString("Target", target);
             w.WriteEndElement();
         }

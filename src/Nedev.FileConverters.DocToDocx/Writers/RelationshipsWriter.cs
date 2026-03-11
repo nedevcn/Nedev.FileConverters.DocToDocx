@@ -1,6 +1,7 @@
 using System.Xml;
 using Nedev.FileConverters.DocToDocx.Models;
 using Nedev.FileConverters.DocToDocx.Utils;
+using System.Globalization;
 
 namespace Nedev.FileConverters.DocToDocx.Writers;
 
@@ -29,6 +30,31 @@ public class RelationshipsWriter
             ImageType.Tiff => ".tiff",
             _ => ".png"
         };
+    }
+
+    public static List<HeaderFooterModel> GetUsableHeaderParts(DocumentModel document)
+    {
+        return GetUsableHeaderFooterParts(document.HeadersFooters.Headers);
+    }
+
+    public static List<HeaderFooterModel> GetUsableFooterParts(DocumentModel document)
+    {
+        return GetUsableHeaderFooterParts(document.HeadersFooters.Footers);
+    }
+
+    private static List<HeaderFooterModel> GetUsableHeaderFooterParts(IEnumerable<HeaderFooterModel> items)
+    {
+        return items.Where(HeaderFooterContentHelper.HasUsableContent).ToList();
+    }
+
+    private static int ParseRelationshipNumber(string? relationshipId)
+    {
+        if (string.IsNullOrEmpty(relationshipId) || !relationshipId.StartsWith("rId", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        return int.TryParse(relationshipId[3..], NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : 0;
     }
     
     /// <summary>
@@ -135,32 +161,20 @@ public class RelationshipsWriter
             WriteRelationship($"rId{ids.VbaProjectRId}", "http://schemas.microsoft.com/office/2006/relationships/vbaProject", "vbaProject.bin");
         }
         
-        // Header relationships (up to three: first/odd/even)
-        if (ids.HeaderFirstRId > 0)
+        foreach (var header in GetUsableHeaderParts(document))
         {
-            WriteRelationship($"rId{ids.HeaderFirstRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header", "header1.xml");
+            if (string.IsNullOrEmpty(header.RelationshipId) || string.IsNullOrEmpty(header.PartName))
+                continue;
+
+            WriteRelationship(header.RelationshipId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header", header.PartName);
         }
-        if (ids.HeaderOddRId > 0)
+
+        foreach (var footer in GetUsableFooterParts(document))
         {
-            WriteRelationship($"rId{ids.HeaderOddRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header", "header2.xml");
-        }
-        if (ids.HeaderEvenRId > 0)
-        {
-            WriteRelationship($"rId{ids.HeaderEvenRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header", "header3.xml");
-        }
-        
-        // Footer relationships (up to three: first/odd/even)
-        if (ids.FooterFirstRId > 0)
-        {
-            WriteRelationship($"rId{ids.FooterFirstRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer", "footer1.xml");
-        }
-        if (ids.FooterOddRId > 0)
-        {
-            WriteRelationship($"rId{ids.FooterOddRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer", "footer2.xml");
-        }
-        if (ids.FooterEvenRId > 0)
-        {
-            WriteRelationship($"rId{ids.FooterEvenRId}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer", "footer3.xml");
+            if (string.IsNullOrEmpty(footer.RelationshipId) || string.IsNullOrEmpty(footer.PartName))
+                continue;
+
+            WriteRelationship(footer.RelationshipId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer", footer.PartName);
         }
 
         // Hyperlink relationships (external)
@@ -180,6 +194,18 @@ public class RelationshipsWriter
     {
         var ids = new DocumentRelationshipIds();
         var nextId = 2; // rId1 = styles
+
+        foreach (var header in document.HeadersFooters.Headers)
+        {
+            header.RelationshipId = null;
+            header.PartName = null;
+        }
+
+        foreach (var footer in document.HeadersFooters.Footers)
+        {
+            footer.RelationshipId = null;
+            footer.PartName = null;
+        }
         
         ids.SettingsRId = nextId++;
         
@@ -223,28 +249,27 @@ public class RelationshipsWriter
         if (document.Annotations != null && document.Annotations.Count > 0)
             ids.CommentsRId = nextId++;
         
-        // Header/footer parts: allocate distinct IDs per type if present
-        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
-        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
-        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
+        var usableHeaders = GetUsableHeaderParts(document);
+        for (int i = 0; i < usableHeaders.Count; i++)
+        {
+            usableHeaders[i].RelationshipId = $"rId{nextId++}";
+            usableHeaders[i].PartName = $"header{i + 1}.xml";
+        }
 
-        if (hasHeaderFirst)
-            ids.HeaderFirstRId = nextId++;
-        if (hasHeaderOdd)
-            ids.HeaderOddRId = nextId++;
-        if (hasHeaderEven)
-            ids.HeaderEvenRId = nextId++;
+        var usableFooters = GetUsableFooterParts(document);
+        for (int i = 0; i < usableFooters.Count; i++)
+        {
+            usableFooters[i].RelationshipId = $"rId{nextId++}";
+            usableFooters[i].PartName = $"footer{i + 1}.xml";
+        }
 
-        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
-        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
-        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
+        ids.HeaderFirstRId = ParseRelationshipNumber(usableHeaders.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderFirst)?.RelationshipId);
+        ids.HeaderOddRId = ParseRelationshipNumber(usableHeaders.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderOdd)?.RelationshipId);
+        ids.HeaderEvenRId = ParseRelationshipNumber(usableHeaders.FirstOrDefault(h => h.Type == HeaderFooterType.HeaderEven)?.RelationshipId);
 
-        if (hasFooterFirst)
-            ids.FooterFirstRId = nextId++;
-        if (hasFooterOdd)
-            ids.FooterOddRId = nextId++;
-        if (hasFooterEven)
-            ids.FooterEvenRId = nextId++;
+        ids.FooterFirstRId = ParseRelationshipNumber(usableFooters.FirstOrDefault(f => f.Type == HeaderFooterType.FooterFirst)?.RelationshipId);
+        ids.FooterOddRId = ParseRelationshipNumber(usableFooters.FirstOrDefault(f => f.Type == HeaderFooterType.FooterOdd)?.RelationshipId);
+        ids.FooterEvenRId = ParseRelationshipNumber(usableFooters.FirstOrDefault(f => f.Type == HeaderFooterType.FooterEven)?.RelationshipId);
 
         // Backward-compatible aggregate IDs (not used for relationships anymore but
         // kept in case other code relies on them).
@@ -557,6 +582,8 @@ public class ContentTypesWriter
     /// </summary>
     public void WriteContentTypes(DocumentModel document)
     {
+        RelationshipsWriter.ComputeRelationshipIds(document);
+
         _writer.WriteStartDocument();
         
         // Write types root
@@ -614,39 +641,20 @@ public class ContentTypesWriter
         WriteOverride("/word/settings.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml");
 
         
-        // Headers and footers: register up to three header/footer parts
-        bool hasHeaderFirst = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderFirst && HeaderFooterContentHelper.HasUsableContent(h));
-        bool hasHeaderOdd = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderOdd && HeaderFooterContentHelper.HasUsableContent(h));
-        bool hasHeaderEven = document.HeadersFooters.Headers.Any(h => h.Type == HeaderFooterType.HeaderEven && HeaderFooterContentHelper.HasUsableContent(h));
+        foreach (var header in RelationshipsWriter.GetUsableHeaderParts(document))
+        {
+            if (!string.IsNullOrEmpty(header.PartName))
+            {
+                WriteOverride($"/word/{header.PartName}", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
+            }
+        }
 
-        if (hasHeaderFirst)
+        foreach (var footer in RelationshipsWriter.GetUsableFooterParts(document))
         {
-            WriteOverride("/word/header1.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
-        }
-        if (hasHeaderOdd)
-        {
-            WriteOverride("/word/header2.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
-        }
-        if (hasHeaderEven)
-        {
-            WriteOverride("/word/header3.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
-        }
-        
-        bool hasFooterFirst = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterFirst && HeaderFooterContentHelper.HasUsableContent(f));
-        bool hasFooterOdd = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterOdd && HeaderFooterContentHelper.HasUsableContent(f));
-        bool hasFooterEven = document.HeadersFooters.Footers.Any(f => f.Type == HeaderFooterType.FooterEven && HeaderFooterContentHelper.HasUsableContent(f));
-
-        if (hasFooterFirst)
-        {
-            WriteOverride("/word/footer1.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml");
-        }
-        if (hasFooterOdd)
-        {
-            WriteOverride("/word/footer2.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml");
-        }
-        if (hasFooterEven)
-        {
-            WriteOverride("/word/footer3.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml");
+            if (!string.IsNullOrEmpty(footer.PartName))
+            {
+                WriteOverride($"/word/{footer.PartName}", "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml");
+            }
         }
         
         // Footnotes and endnotes

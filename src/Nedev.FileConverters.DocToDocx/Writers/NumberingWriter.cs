@@ -8,6 +8,19 @@ public class NumberingWriter
     private readonly XmlWriter _writer;
     private const string WNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+    private sealed class NumberingInstanceDefinition
+    {
+        public int NumId { get; init; }
+        public int AbstractNumId { get; init; }
+        public List<ListLevelOverride> LevelOverrides { get; init; } = new();
+    }
+
+    private sealed class NumberingPackage
+    {
+        public List<NumberingDefinition> AbstractDefinitions { get; init; } = new();
+        public List<NumberingInstanceDefinition> Instances { get; init; } = new();
+    }
+
     public NumberingWriter(XmlWriter writer)
     {
         _writer = writer;
@@ -20,11 +33,11 @@ public class NumberingWriter
         _writer.WriteAttributeString("xmlns", "w", null, WNs);
         _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
 
-        var numberingDefinitions = BuildNumberingDefinitions(document);
+        var numberingPackage = BuildNumberingDefinitions(document);
 
-        if (numberingDefinitions.Count > 0)
+        if (numberingPackage.AbstractDefinitions.Count > 0)
         {
-            foreach (var numDef in numberingDefinitions)
+            foreach (var numDef in numberingPackage.AbstractDefinitions)
             {
                 var id = numDef.Id;
                 if (id <= 0)
@@ -33,7 +46,11 @@ public class NumberingWriter
                 }
 
                 WriteAbstractNum(numDef, id);
-                WriteNum(id, id);
+            }
+
+            foreach (var instance in numberingPackage.Instances)
+            {
+                WriteNum(instance);
             }
         }
         else
@@ -45,14 +62,13 @@ public class NumberingWriter
         _writer.WriteEndDocument();
     }
 
-    private static List<NumberingDefinition> BuildNumberingDefinitions(DocumentModel document)
+    private static NumberingPackage BuildNumberingDefinitions(DocumentModel document)
     {
         var definitions = document.NumberingDefinitions
             .Where(definition => definition.Id > 0)
             .GroupBy(definition => definition.Id)
             .Select(group => group.First())
-            .OrderBy(definition => definition.Id)
-            .ToList();
+            .ToDictionary(definition => definition.Id);
 
         var usedListIds = document.Paragraphs
             .Select(paragraph => (paragraph.Properties?.ListFormatId ?? 0) > 0
@@ -63,18 +79,94 @@ public class NumberingWriter
             .OrderBy(listId => listId)
             .ToList();
 
+        var overrides = document.ListFormatOverrides
+            .Where(overrideDefinition => overrideDefinition.OverrideId > 0)
+            .GroupBy(overrideDefinition => overrideDefinition.OverrideId)
+            .Select(group => group.First())
+            .ToDictionary(overrideDefinition => overrideDefinition.OverrideId);
+
+        foreach (var listOverride in overrides.Values)
+        {
+            var abstractNumId = listOverride.ListId > 0 ? listOverride.ListId : listOverride.OverrideId;
+            if (!definitions.ContainsKey(abstractNumId))
+            {
+                definitions[abstractNumId] = CreateFallbackDefinition(abstractNumId);
+            }
+        }
+
         foreach (var listId in usedListIds)
         {
-            if (definitions.Any(definition => definition.Id == listId))
+            var abstractNumId = overrides.TryGetValue(listId, out var listOverride) && listOverride.ListId > 0
+                ? listOverride.ListId
+                : listId;
+
+            if (definitions.ContainsKey(abstractNumId))
             {
                 continue;
             }
 
-            definitions.Add(CreateFallbackDefinition(listId));
+            definitions[abstractNumId] = CreateFallbackDefinition(abstractNumId);
         }
 
-        definitions.Sort((left, right) => left.Id.CompareTo(right.Id));
-        return definitions;
+        var instanceIds = usedListIds.Count > 0
+            ? usedListIds
+            : overrides.Keys.Union(definitions.Keys).OrderBy(id => id).ToList();
+
+        var instances = new List<NumberingInstanceDefinition>();
+        foreach (var numId in instanceIds)
+        {
+            ListFormatOverride? listOverride = null;
+            var abstractNumId = overrides.TryGetValue(numId, out listOverride) && listOverride.ListId > 0
+                ? listOverride.ListId
+                : numId;
+
+            if (!definitions.ContainsKey(abstractNumId))
+            {
+                definitions[abstractNumId] = CreateFallbackDefinition(abstractNumId);
+            }
+
+            instances.Add(new NumberingInstanceDefinition
+            {
+                NumId = numId,
+                AbstractNumId = abstractNumId,
+                LevelOverrides = listOverride != null
+                    ? GetEffectiveLevelOverrides(definitions[abstractNumId], listOverride)
+                    : new List<ListLevelOverride>()
+            });
+        }
+
+        return new NumberingPackage
+        {
+            AbstractDefinitions = definitions.Values.OrderBy(definition => definition.Id).ToList(),
+            Instances = instances.OrderBy(instance => instance.NumId).ToList()
+        };
+    }
+
+    private static List<ListLevelOverride> GetEffectiveLevelOverrides(NumberingDefinition definition, ListFormatOverride listOverride)
+    {
+        var baseStarts = definition.Levels.ToDictionary(level => level.Level, level => level.Start);
+        var effectiveOverrides = new List<ListLevelOverride>();
+
+        foreach (var levelOverride in listOverride.Levels.OrderBy(level => level.Level))
+        {
+            if (levelOverride.StartAt <= 0)
+            {
+                continue;
+            }
+
+            if (baseStarts.TryGetValue(levelOverride.Level, out var baseStart) && baseStart == levelOverride.StartAt)
+            {
+                continue;
+            }
+
+            effectiveOverrides.Add(new ListLevelOverride
+            {
+                Level = levelOverride.Level,
+                StartAt = levelOverride.StartAt
+            });
+        }
+
+        return effectiveOverrides;
     }
 
     private static NumberingDefinition CreateFallbackDefinition(int listId)
@@ -217,14 +309,26 @@ public class NumberingWriter
         _writer.WriteEndElement(); // w:lvl
     }
 
-    private void WriteNum(int numId, int abstractNumId)
+    private void WriteNum(NumberingInstanceDefinition instance)
     {
         _writer.WriteStartElement("w", "num", WNs);
-        _writer.WriteAttributeString("w", "numId", WNs, numId.ToString());
+        _writer.WriteAttributeString("w", "numId", WNs, instance.NumId.ToString());
 
         _writer.WriteStartElement("w", "abstractNumId", WNs);
-        _writer.WriteAttributeString("w", "val", WNs, abstractNumId.ToString());
+        _writer.WriteAttributeString("w", "val", WNs, instance.AbstractNumId.ToString());
         _writer.WriteEndElement();
+
+        foreach (var levelOverride in instance.LevelOverrides)
+        {
+            _writer.WriteStartElement("w", "lvlOverride", WNs);
+            _writer.WriteAttributeString("w", "ilvl", WNs, levelOverride.Level.ToString());
+
+            _writer.WriteStartElement("w", "startOverride", WNs);
+            _writer.WriteAttributeString("w", "val", WNs, levelOverride.StartAt.ToString());
+            _writer.WriteEndElement();
+
+            _writer.WriteEndElement();
+        }
 
         _writer.WriteEndElement();
     }

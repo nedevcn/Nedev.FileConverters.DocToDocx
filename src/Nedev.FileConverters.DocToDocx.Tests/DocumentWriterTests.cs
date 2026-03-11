@@ -43,7 +43,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 var dw = new DocumentWriter(writer);
                 dw.WriteDocument(doc);
                 writer.Flush();
-                xml = Encoding.UTF8.GetString(ms.ToArray());
+                xml = new StreamReader(new MemoryStream(ms.ToArray()), Encoding.UTF8).ReadToEnd();
             }
 
             // Assert: the run text makes it into the output (xml:space attribute may be present)
@@ -69,7 +69,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 var dw = new DocumentWriter(writer);
                 dw.WriteDocument(doc);
                 writer.Flush();
-                xml = Encoding.UTF8.GetString(ms.ToArray());
+                xml = new StreamReader(new MemoryStream(ms.ToArray()), Encoding.UTF8).ReadToEnd();
             }
 
             Assert.DoesNotContain("<w:spacing w:line=\"240\" w:lineRule=\"atLeast\"", xml, StringComparison.Ordinal);
@@ -93,7 +93,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 var dw = new DocumentWriter(writer);
                 dw.WriteDocument(doc);
                 writer.Flush();
-                xml = Encoding.UTF8.GetString(ms.ToArray());
+                xml = new StreamReader(new MemoryStream(ms.ToArray()), Encoding.UTF8).ReadToEnd();
             }
 
             Assert.Contains("<w:b", xml);
@@ -183,13 +183,16 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             }
 
             using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
-            Assert.NotNull(zip.GetEntry("word/header2.xml"));
-            Assert.NotNull(zip.GetEntry("word/footer2.xml"));
+            var headerEntry = zip.Entries.FirstOrDefault(entry => entry.FullName.StartsWith("word/header", StringComparison.Ordinal) && entry.FullName.EndsWith(".xml", StringComparison.Ordinal));
+            var footerEntry = zip.Entries.FirstOrDefault(entry => entry.FullName.StartsWith("word/footer", StringComparison.Ordinal) && entry.FullName.EndsWith(".xml", StringComparison.Ordinal));
+
+            Assert.NotNull(headerEntry);
+            Assert.NotNull(footerEntry);
             Assert.NotNull(zip.GetEntry("word/footnotes.xml"));
 
-            var hdr = new StreamReader(zip.GetEntry("word/header2.xml").Open()).ReadToEnd();
+            var hdr = new StreamReader(headerEntry!.Open()).ReadToEnd();
             Assert.Contains("HDR", hdr);
-            var ftr = new StreamReader(zip.GetEntry("word/footer2.xml").Open()).ReadToEnd();
+            var ftr = new StreamReader(footerEntry!.Open()).ReadToEnd();
             Assert.Contains("FTR", ftr);
             var fnxml = new StreamReader(zip.GetEntry("word/footnotes.xml").Open()).ReadToEnd();
             Assert.Contains("fn", fnxml);
@@ -228,6 +231,81 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             var contentTypes = new StreamReader(zip.GetEntry("[Content_Types].xml").Open()).ReadToEnd();
             Assert.Contains("/word/comments.xml", contentTypes);
             Assert.Contains("application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml", contentTypes);
+        }
+
+        [Fact]
+        public void WriteDocument_NumberingInstances_EmitLevelOverridesOnNum()
+        {
+            var doc = new DocumentModel();
+            doc.NumberingDefinitions.Add(new NumberingDefinition
+            {
+                Id = 42,
+                Levels =
+                {
+                    new NumberingLevel
+                    {
+                        Level = 0,
+                        NumberFormat = NumberFormat.Decimal,
+                        Text = "%1.",
+                        Start = 1
+                    }
+                }
+            });
+            doc.ListFormatOverrides.Add(new ListFormatOverride
+            {
+                OverrideId = 7,
+                ListId = 42,
+                Levels =
+                {
+                    new ListLevelOverride { Level = 0, StartAt = 4 }
+                }
+            });
+            doc.Paragraphs.Add(new ParagraphModel
+            {
+                Properties = new ParagraphProperties
+                {
+                    ListFormatId = 7,
+                    ListLevel = 0
+                },
+                Runs = { new RunModel { Text = "item" } }
+            });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new ZipArchive(new MemoryStream(package), ZipArchiveMode.Read);
+            var documentXml = XDocument.Load(zip.GetEntry("word/document.xml")!.Open());
+            var numberingXml = XDocument.Load(zip.GetEntry("word/numbering.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraphNumId = documentXml
+                .Descendants(w + "numPr")
+                .Elements(w + "numId")
+                .Attributes(w + "val")
+                .Select(attribute => attribute.Value)
+                .FirstOrDefault();
+
+            Assert.Equal("7", paragraphNumId);
+
+            var num = numberingXml
+                .Descendants(w + "num")
+                .FirstOrDefault(element => string.Equals(element.Attribute(w + "numId")?.Value, "7", StringComparison.Ordinal));
+
+            Assert.NotNull(num);
+            Assert.Equal("42", num!.Element(w + "abstractNumId")?.Attribute(w + "val")?.Value);
+
+            var levelOverride = num
+                .Elements(w + "lvlOverride")
+                .FirstOrDefault(element => string.Equals(element.Attribute(w + "ilvl")?.Value, "0", StringComparison.Ordinal));
+
+            Assert.NotNull(levelOverride);
+            Assert.Equal("4", levelOverride!.Element(w + "startOverride")?.Attribute(w + "val")?.Value);
         }
 
         [Fact]
@@ -405,7 +483,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             }
 
             using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
-            var headerXml = new StreamReader(zip.GetEntry("word/header2.xml").Open()).ReadToEnd();
+            var headerXml = new StreamReader(zip.Entries.First(entry => entry.FullName.StartsWith("word/header", StringComparison.Ordinal) && entry.FullName.EndsWith(".xml", StringComparison.Ordinal)).Open()).ReadToEnd();
 
             Assert.Contains("themeColor=\"accent1\"", headerXml);
             Assert.Contains("val=\"4472C4\"", headerXml);
@@ -433,7 +511,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             }
 
             using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package), System.IO.Compression.ZipArchiveMode.Read);
-            var headerXml = new StreamReader(zip.GetEntry("word/header2.xml").Open()).ReadToEnd();
+            var headerXml = new StreamReader(zip.Entries.First(entry => entry.FullName.StartsWith("word/header", StringComparison.Ordinal) && entry.FullName.EndsWith(".xml", StringComparison.Ordinal)).Open()).ReadToEnd();
 
             Assert.Contains("xml:space=\"preserve\"", headerXml);
             Assert.Contains("> HDR  </w:t>", headerXml);
@@ -569,7 +647,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 var dw = new DocumentWriter(writer);
                 dw.WriteDocument(doc);
                 writer.Flush();
-                xml = Encoding.UTF8.GetString(ms.ToArray());
+                xml = new StreamReader(new MemoryStream(ms.ToArray()), Encoding.UTF8).ReadToEnd();
             }
 
             Assert.Contains("before", xml);
@@ -584,12 +662,15 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 .Descendants(w + "tbl")
                 .Where(tbl => !tbl.Ancestors(w + "tbl").Any())
                 .Single()
-                .Descendants(w + "tc")
+                .Elements(w + "tr")
+                .Single()
+                .Elements(w + "tc")
                 .Single();
 
-            Assert.Equal(
-                new[] { w + "tcPr", w + "tbl", w + "p" },
-                parentCell.Elements().Select(element => element.Name).ToArray());
+            var childElements = parentCell.Elements().Select(element => element.Name).ToArray();
+            Assert.True(childElements.Length >= 2);
+            Assert.Equal(w + "tbl", childElements[^2]);
+            Assert.Equal(w + "p", childElements[^1]);
         }
 
         [Fact]
@@ -659,7 +740,7 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 using var writer = XmlWriter.Create(ms, settings);
                 new DocumentWriter(writer).WriteDocument(doc);
                 writer.Flush();
-                xml = Encoding.UTF8.GetString(ms.ToArray());
+                xml = new StreamReader(new MemoryStream(ms.ToArray()), Encoding.UTF8).ReadToEnd();
             }
 
             Assert.Contains("node text", xml);
@@ -1488,6 +1569,162 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void WriteDocument_SectionEndingAtTable_UsesParagraphScopedSectionBreak()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel
+            {
+                Index = 0,
+                Type = ParagraphType.TableCell,
+                Runs = { new RunModel { Text = "cell" } }
+            });
+            doc.Paragraphs.Add(new ParagraphModel
+            {
+                Index = 1,
+                Runs = { new RunModel { Text = "after" } }
+            });
+
+            var table = new TableModel
+            {
+                StartParagraphIndex = 0,
+                EndParagraphIndex = 0,
+                ColumnCount = 1,
+                RowCount = 1,
+                Rows =
+                {
+                    new TableRowModel
+                    {
+                        Cells =
+                        {
+                            new TableCellModel
+                            {
+                                ColumnIndex = 0,
+                                Paragraphs = { new ParagraphModel { Runs = { new RunModel { Text = "cell" } } } }
+                            }
+                        }
+                    }
+                }
+            };
+            doc.Tables.Add(table);
+            doc.Properties.Sections.Add(new SectionInfo { SectionIndex = 0, StartParagraphIndex = 0, BreakCode = 2 });
+            doc.Properties.Sections.Add(new SectionInfo { SectionIndex = 1, StartParagraphIndex = 1, BreakCode = 2 });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new ZipArchive(new MemoryStream(package), ZipArchiveMode.Read);
+            var documentXml = new StreamReader(zip.GetEntry("word/document.xml")!.Open()).ReadToEnd();
+            var xDocument = XDocument.Parse(documentXml);
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var bodyElements = xDocument.Root!.Element(w + "body")!.Elements().ToList();
+
+            Assert.Equal(w + "tbl", bodyElements[0].Name);
+            Assert.Equal(w + "p", bodyElements[1].Name);
+            Assert.NotNull(bodyElements[1].Element(w + "pPr")?.Element(w + "sectPr"));
+            Assert.Equal("after", string.Concat(bodyElements[2].Descendants(w + "t").Select(text => text.Value)));
+            Assert.Equal(w + "sectPr", bodyElements[^1].Name);
+            Assert.Single(bodyElements.Where(element => element.Name == w + "sectPr"));
+        }
+
+        [Fact]
+        public void WriteDocument_PerSectionHeaders_GetDistinctPartsAndRelationships()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Index = 0, Runs = { new RunModel { Text = "first" } } });
+            doc.Paragraphs.Add(new ParagraphModel { Index = 1, Runs = { new RunModel { Text = "second" } } });
+            doc.Properties.Sections.Add(new SectionInfo { SectionIndex = 0, StartParagraphIndex = 0, BreakCode = 2 });
+            doc.Properties.Sections.Add(new SectionInfo { SectionIndex = 1, StartParagraphIndex = 1, BreakCode = 2 });
+            doc.HeadersFooters.Headers.Add(new HeaderFooterModel { SectionIndex = 0, Type = HeaderFooterType.HeaderOdd, Text = "section 1 header" });
+            doc.HeadersFooters.Headers.Add(new HeaderFooterModel { SectionIndex = 1, Type = HeaderFooterType.HeaderOdd, Text = "section 2 header" });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new ZipArchive(new MemoryStream(package), ZipArchiveMode.Read);
+            var documentXml = new StreamReader(zip.GetEntry("word/document.xml")!.Open()).ReadToEnd();
+            var relsXml = new StreamReader(zip.GetEntry("word/_rels/document.xml.rels")!.Open()).ReadToEnd();
+
+            var documentXDoc = XDocument.Parse(documentXml);
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            XNamespace r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            var headerRelationshipIds = documentXDoc
+                .Descendants(w + "sectPr")
+                .Elements(w + "headerReference")
+                .Where(reference => (string?)reference.Attribute(w + "type") == "default")
+                .Select(reference => (string?)reference.Attribute(r + "id"))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .ToList();
+
+            Assert.Equal(2, headerRelationshipIds.Count);
+            Assert.Equal(2, headerRelationshipIds.Distinct(StringComparer.Ordinal).Count());
+            Assert.NotNull(zip.GetEntry("word/header1.xml"));
+            Assert.NotNull(zip.GetEntry("word/header2.xml"));
+            Assert.Contains("Target=\"header1.xml\"", relsXml, StringComparison.Ordinal);
+            Assert.Contains("Target=\"header2.xml\"", relsXml, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void WriteDocument_HeaderPart_WritesLocalImageAndOleRelationships()
+        {
+            var doc = new DocumentModel();
+            doc.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "body" } } });
+            doc.Images.Add(new ImageModel { WidthEMU = 100, HeightEMU = 100, Data = new byte[] { 1 } });
+            doc.OleObjects.Add(new OleObjectModel
+            {
+                ObjectId = "ole-1",
+                ProgId = "Excel.Sheet.8",
+                ObjectData = new byte[] { 1, 2, 3 },
+                ImageIndex = 0
+            });
+            doc.HeadersFooters.Headers.Add(new HeaderFooterModel
+            {
+                Type = HeaderFooterType.HeaderOdd,
+                Paragraphs =
+                {
+                    new ParagraphModel
+                    {
+                        Runs =
+                        {
+                            new RunModel { IsPicture = true, ImageIndex = 0 },
+                            new RunModel { IsPicture = true, IsOle = true, ImageIndex = 0, OleObjectId = "ole-1", OleProgId = "Excel.Sheet.8" }
+                        }
+                    }
+                }
+            });
+
+            byte[] package;
+            using (var ms = new MemoryStream())
+            {
+                var zw = new ZipWriter(ms);
+                zw.WriteDocument(doc);
+                zw.Dispose();
+                package = ms.ToArray();
+            }
+
+            using var zip = new ZipArchive(new MemoryStream(package), ZipArchiveMode.Read);
+            var headerXml = new StreamReader(zip.GetEntry("word/header1.xml")!.Open()).ReadToEnd();
+            var headerRelsXml = new StreamReader(zip.GetEntry("word/_rels/header1.xml.rels")!.Open()).ReadToEnd();
+
+            Assert.Contains("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"", headerXml, StringComparison.Ordinal);
+            Assert.Contains("r:embed=\"rId1\"", headerXml, StringComparison.Ordinal);
+            Assert.Contains("o:OLEObject", headerXml, StringComparison.Ordinal);
+            Assert.Contains("Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"", headerRelsXml, StringComparison.Ordinal);
+            Assert.Contains("Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject\"", headerRelsXml, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void SettingsWriter_WritesCompatibilityFlags()
         {
             var doc = new DocumentModel();
@@ -1838,8 +2075,14 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 (paragraphA!.Properties?.ListFormatId ?? paragraphA.ListFormatId) > 0,
                 "Expected paragraph 'A' to retain list metadata from the source DOC.");
 
+            var listInstanceId = paragraphA.Properties?.ListFormatId ?? paragraphA.ListFormatId;
+            var listOverride = document.ListFormatOverrides
+                .FirstOrDefault(overrideDefinition => overrideDefinition.OverrideId == listInstanceId);
+
+            Assert.NotNull(listOverride);
+
             var listDefinition = document.NumberingDefinitions
-                .FirstOrDefault(definition => definition.Id == (paragraphA.Properties?.ListFormatId ?? paragraphA.ListFormatId));
+                .FirstOrDefault(definition => definition.Id == (listOverride?.ListId ?? listInstanceId));
 
             Assert.NotNull(listDefinition);
 

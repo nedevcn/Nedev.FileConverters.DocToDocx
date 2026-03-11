@@ -355,7 +355,13 @@ public enum NumberFormat
 /// </summary>
 public class ListFormatOverride
 {
+    public int OverrideId { get; set; }
     public int ListId { get; set; }
+    public List<ListLevelOverride> Levels { get; set; } = new();
+}
+
+public class ListLevelOverride
+{
     public int Level { get; set; }
     public int StartAt { get; set; }
 }
@@ -394,6 +400,7 @@ public class HeaderFooterModel
     public int CharacterPosition { get; set; }
     public int CharacterLength { get; set; }
     public string? RelationshipId { get; set; }
+    public string? PartName { get; set; }
 }
 
 /// <summary>

@@ -19,6 +19,7 @@ public class ListReader
     public StyleSheet? Styles { get; set; }
     public List<NumberingDefinition> NumberingDefinitions { get; private set; } = new();
     public List<ListFormat> ListFormats { get; private set; } = new();
+    public List<ListFormatOverride> ListFormatOverrides { get; private set; } = new();
 
     public ListReader(BinaryReader tableReader, FibReader fib)
     {
@@ -28,6 +29,10 @@ public class ListReader
 
     public void Read()
     {
+        NumberingDefinitions = new List<NumberingDefinition>();
+        ListFormats = new List<ListFormat>();
+        ListFormatOverrides = new List<ListFormatOverride>();
+
         if (_fib.FcPlcfLst == 0 || _fib.LcbPlcfLst == 0)
         {
             return;
@@ -412,14 +417,16 @@ public class ListReader
         if (lfoCount <= 0 || lfoCount > 1000)
             return;
 
+        var overrides = new List<ListFormatOverride>();
+
         for (int i = 0; i < lfoCount && _tableReader.BaseStream.Position + 20 <= endPos; i++)
         {
             try
             {
                 var lsbfr = _tableReader.ReadInt32();
-                var reserved = _tableReader.ReadInt32();
+                _tableReader.ReadInt32();
 
-                var flags = _tableReader.ReadUInt16();
+                _tableReader.ReadUInt16();
                 _tableReader.ReadUInt16();
 
                 var grpLfo = new byte[12];
@@ -428,35 +435,89 @@ public class ListReader
                     grpLfo[j] = _tableReader.ReadByte();
                 }
 
-                if (i < ListFormats.Count)
+                var listId = lsbfr;
+                if (listId <= 0 || !ListFormats.Any(format => format.ListId == listId))
                 {
-                    ApplyLfoOverrides(ListFormats[i], grpLfo);
+                    listId = i < ListFormats.Count ? ListFormats[i].ListId : 0;
                 }
+
+                if (listId <= 0)
+                {
+                    continue;
+                }
+
+                overrides.Add(CreateListFormatOverride(i + 1, listId, grpLfo));
             }
             catch
             {
                 break;
             }
         }
+
+        ListFormatOverrides = NormalizeListFormatOverrides(overrides);
     }
 
-    private void ApplyLfoOverrides(ListFormat listFormat, byte[] grpLfo)
+    private List<ListFormatOverride> NormalizeListFormatOverrides(List<ListFormatOverride> overrides)
     {
-        if (grpLfo.Length < 12)
-            return;
+        var normalizedOverrides = overrides
+            .Where(overrideDefinition => overrideDefinition.OverrideId > 0)
+            .GroupBy(overrideDefinition => overrideDefinition.OverrideId)
+            .Select(group => group.First())
+            .OrderBy(overrideDefinition => overrideDefinition.OverrideId)
+            .ToList();
 
-        for (int lvl = 0; lvl < Math.Min(listFormat.Levels.Count, 9); lvl++)
+        var existingIds = normalizedOverrides
+            .Select(overrideDefinition => overrideDefinition.OverrideId)
+            .ToHashSet();
+
+        foreach (var listFormat in ListFormats.Where(format => format.ListId > 0))
+        {
+            if (existingIds.Contains(listFormat.ListId))
+            {
+                continue;
+            }
+
+            normalizedOverrides.Add(new ListFormatOverride
+            {
+                OverrideId = listFormat.ListId,
+                ListId = listFormat.ListId
+            });
+        }
+
+        normalizedOverrides.Sort((left, right) => left.OverrideId.CompareTo(right.OverrideId));
+        return normalizedOverrides;
+    }
+
+    private static ListFormatOverride CreateListFormatOverride(int overrideId, int listId, byte[] grpLfo)
+    {
+        var listOverride = new ListFormatOverride
+        {
+            OverrideId = overrideId,
+            ListId = listId
+        };
+
+        for (int lvl = 0; lvl < Math.Min(grpLfo.Length / 2, 9); lvl++)
         {
             var offset = lvl * 2;
-            if (offset + 1 < grpLfo.Length)
+            if (offset + 1 >= grpLfo.Length)
             {
-                var startAt = grpLfo[offset] | (grpLfo[offset + 1] << 8);
-                if (startAt > 0)
-                {
-                    listFormat.Levels[lvl].StartAt = startAt;
-                }
+                continue;
             }
+
+            var startAt = grpLfo[offset] | (grpLfo[offset + 1] << 8);
+            if (startAt <= 0)
+            {
+                continue;
+            }
+
+            listOverride.Levels.Add(new ListLevelOverride
+            {
+                Level = lvl,
+                StartAt = startAt
+            });
         }
+
+        return listOverride;
     }
 
     public ListFormat? GetListFormat(int listId)

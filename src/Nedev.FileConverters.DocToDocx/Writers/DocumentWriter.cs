@@ -40,6 +40,8 @@ public partial class DocumentWriter
     private Dictionary<int, List<int>> _commentStartsByParagraph = new();
     /// <summary>Paragraph index → list of annotation IDs whose range ends at that paragraph.</summary>
     private Dictionary<int, List<int>> _commentEndsByParagraph = new();
+    private IReadOnlyDictionary<int, string>? _imageRelationshipOverrides;
+    private IReadOnlyDictionary<string, string>? _oleRelationshipOverrides;
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>
     private bool _suppressLeadingPageBreak;
 
@@ -57,10 +59,16 @@ public partial class DocumentWriter
     /// <summary>
     /// Binds document-scoped context for fragment writers that reuse paragraph/run emission.
     /// </summary>
-    internal DocumentWriter BindDocumentContext(DocumentModel document, DocumentRelationshipIds? relationshipIds = null)
+    internal DocumentWriter BindDocumentContext(
+        DocumentModel document,
+        DocumentRelationshipIds? relationshipIds = null,
+        IReadOnlyDictionary<int, string>? imageRelationshipOverrides = null,
+        IReadOnlyDictionary<string, string>? oleRelationshipOverrides = null)
     {
         _document = document;
         _relationshipIds = relationshipIds;
+        _imageRelationshipOverrides = imageRelationshipOverrides;
+        _oleRelationshipOverrides = oleRelationshipOverrides;
         return this;
     }
     
@@ -276,10 +284,10 @@ public partial class DocumentWriter
                 var lastParaOfTable = table.EndParagraphIndex;
                 if (sectionEndMap.TryGetValue(lastParaOfTable, out var sectionForTable))
                 {
-                    const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-                    _writer.WriteStartElement("w", "sectPr", wNs);
-                    WriteSectionContent(sectionForTable);
-                    _writer.WriteEndElement();
+                    if (!IsFinalSection(document, sectionForTable))
+                    {
+                        WriteSectionBreakParagraph(sectionForTable);
+                    }
                 }
 
                 paraIndex = table.EndParagraphIndex + 1;
@@ -291,6 +299,10 @@ public partial class DocumentWriter
                 // If a section ends at this paragraph, pass it so sectPr is embedded inside w:pPr
                 SectionInfo? sectionForParagraph = null;
                 sectionEndMap.TryGetValue(paragraph.Index, out sectionForParagraph);
+                if (IsFinalSection(document, sectionForParagraph))
+                {
+                    sectionForParagraph = null;
+                }
 
                 WriteParagraph(paragraph, _suppressLeadingPageBreak, sectionForParagraph);
                 if (_suppressLeadingPageBreak && ParagraphHasVisibleContent(paragraph))
@@ -530,6 +542,18 @@ public partial class DocumentWriter
         WriteSectionContent(lastSection);
         _writer.WriteEndElement(); // sectPr
     }
+
+    private void WriteSectionBreakParagraph(SectionInfo section)
+    {
+        const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        _writer.WriteStartElement("w", "p", wNs);
+        _writer.WriteStartElement("w", "pPr", wNs);
+        _writer.WriteStartElement("w", "sectPr", wNs);
+        WriteSectionContent(section);
+        _writer.WriteEndElement(); // w:sectPr
+        _writer.WriteEndElement(); // w:pPr
+        _writer.WriteEndElement(); // w:p
+    }
     
     private void WriteSectionProperties(DocumentProperties props)
     {
@@ -555,29 +579,55 @@ public partial class DocumentWriter
         // A sectPr can contain multiple references (default/first/even), and
         // these must be emitted together to activate first-page and facing-page
         // semantics in Word.
-        var ids = RelationshipsWriter.ComputeRelationshipIds(_document);
-        bool allowsHeaders = section?.HeaderReference != HeaderFooterReferenceType.None;
-        bool allowsFooters = section?.FooterReference != HeaderFooterReferenceType.None;
-        bool usesFirstPage = allowsHeaders || allowsFooters;
-        usesFirstPage &= ids.HeaderFirstRId > 0 || ids.FooterFirstRId > 0;
-        bool usesEvenAndOdd = UsesEvenAndOddHeaders(_document);
+        int sectionIndex = section?.SectionIndex ?? -1;
+        bool suppressHeaders = section?.HeaderReference == HeaderFooterReferenceType.None;
+        bool suppressFooters = section?.FooterReference == HeaderFooterReferenceType.None;
+        var defaultHeader = suppressHeaders ? null : FindHeaderFooter(_document.HeadersFooters.Headers, sectionIndex, HeaderFooterType.HeaderOdd);
+        var firstHeader = suppressHeaders ? null : FindHeaderFooter(_document.HeadersFooters.Headers, sectionIndex, HeaderFooterType.HeaderFirst);
+        var evenHeader = suppressHeaders ? null : FindHeaderFooter(_document.HeadersFooters.Headers, sectionIndex, HeaderFooterType.HeaderEven);
+        var defaultFooter = suppressFooters ? null : FindHeaderFooter(_document.HeadersFooters.Footers, sectionIndex, HeaderFooterType.FooterOdd);
+        var firstFooter = suppressFooters ? null : FindHeaderFooter(_document.HeadersFooters.Footers, sectionIndex, HeaderFooterType.FooterFirst);
+        var evenFooter = suppressFooters ? null : FindHeaderFooter(_document.HeadersFooters.Footers, sectionIndex, HeaderFooterType.FooterEven);
+        bool allowsHeaders = defaultHeader != null || firstHeader != null || evenHeader != null;
+        bool allowsFooters = defaultFooter != null || firstFooter != null || evenFooter != null;
+        bool usesFirstPage = section?.TitlePage == true || firstHeader != null || firstFooter != null;
+        bool usesEvenAndOdd = UsesEvenAndOddHeaders(_document) && (evenHeader != null || evenFooter != null);
 
         if (allowsHeaders)
         {
-            WriteHeaderFooterReference("headerReference", "default", ids.HeaderOddRId);
+            WriteHeaderFooterReference("headerReference", "default", defaultHeader?.RelationshipId);
             if (usesFirstPage)
-                WriteHeaderFooterReference("headerReference", "first", ids.HeaderFirstRId);
+                WriteHeaderFooterReference("headerReference", "first", firstHeader?.RelationshipId);
             if (usesEvenAndOdd)
-                WriteHeaderFooterReference("headerReference", "even", ids.HeaderEvenRId);
+                WriteHeaderFooterReference("headerReference", "even", evenHeader?.RelationshipId);
         }
 
         if (allowsFooters)
         {
-            WriteHeaderFooterReference("footerReference", "default", ids.FooterOddRId);
+            WriteHeaderFooterReference("footerReference", "default", defaultFooter?.RelationshipId);
             if (usesFirstPage)
-                WriteHeaderFooterReference("footerReference", "first", ids.FooterFirstRId);
+                WriteHeaderFooterReference("footerReference", "first", firstFooter?.RelationshipId);
             if (usesEvenAndOdd)
-                WriteHeaderFooterReference("footerReference", "even", ids.FooterEvenRId);
+                WriteHeaderFooterReference("footerReference", "even", evenFooter?.RelationshipId);
+        }
+
+        if (section?.BreakCode is >= 0 and <= 4)
+        {
+            var sectionType = section.BreakCode switch
+            {
+                0 => "continuous",
+                1 => "nextColumn",
+                2 => "nextPage",
+                3 => "evenPage",
+                4 => "oddPage",
+                _ => null
+            };
+            if (!string.IsNullOrEmpty(sectionType))
+            {
+                _writer.WriteStartElement("w", "type", wNs);
+                _writer.WriteAttributeString("w", "val", wNs, sectionType);
+                _writer.WriteEndElement();
+            }
         }
 
         if (usesFirstPage)
@@ -617,7 +667,13 @@ public partial class DocumentWriter
         }
 
         // Page numbering start (document-level only, for now)
-        if (section == null && props.SectionStartPageNumber > 1)
+        if (section?.PageNumberStart is int pageNumberStart)
+        {
+            _writer.WriteStartElement("w", "pgNumType", wNs);
+            _writer.WriteAttributeString("w", "start", wNs, pageNumberStart.ToString());
+            _writer.WriteEndElement();
+        }
+        else if (section == null && props.SectionStartPageNumber > 1)
         {
             _writer.WriteStartElement("w", "pgNumType", wNs);
             _writer.WriteAttributeString("w", "start", wNs, props.SectionStartPageNumber.ToString());
@@ -626,8 +682,29 @@ public partial class DocumentWriter
 
         // Columns
         _writer.WriteStartElement("w", "cols", wNs);
-        _writer.WriteAttributeString("w", "space", wNs, "720");
+        int columnCount = section?.ColumnCount > 0 ? section.ColumnCount : 1;
+        int columnSpacing = section?.ColumnSpacing > 0 ? section.ColumnSpacing : 720;
+        if (columnCount > 1)
+            _writer.WriteAttributeString("w", "num", wNs, columnCount.ToString());
+        _writer.WriteAttributeString("w", "space", wNs, columnSpacing.ToString());
         _writer.WriteEndElement();
+
+        if (section?.VerticalAlignment > 0)
+        {
+            var verticalAlignment = section.VerticalAlignment switch
+            {
+                1 => "center",
+                2 => "both",
+                3 => "bottom",
+                _ => null
+            };
+            if (!string.IsNullOrEmpty(verticalAlignment))
+            {
+                _writer.WriteStartElement("w", "vAlign", wNs);
+                _writer.WriteAttributeString("w", "val", wNs, verticalAlignment);
+                _writer.WriteEndElement();
+            }
+        }
 
         if (section?.DocGridLinePitch > 0)
         {
@@ -638,15 +715,15 @@ public partial class DocumentWriter
         }
     }
 
-    private void WriteHeaderFooterReference(string elementName, string type, int relationshipId)
+    private void WriteHeaderFooterReference(string elementName, string type, string? relationshipId)
     {
-        if (relationshipId <= 0)
+        if (string.IsNullOrEmpty(relationshipId))
             return;
 
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
         _writer.WriteStartElement("w", elementName, wNs);
         _writer.WriteAttributeString("w", "type", wNs, type);
-        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", $"rId{relationshipId}");
+        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", relationshipId);
         _writer.WriteEndElement();
     }
 
@@ -693,6 +770,41 @@ public partial class DocumentWriter
         }
 
         return map;
+    }
+
+    private static bool IsFinalSection(DocumentModel document, SectionInfo? section)
+    {
+        if (section == null || document.Properties.Sections.Count == 0)
+            return false;
+
+        if (section.SectionIndex >= 0)
+            return section.SectionIndex == document.Properties.Sections.Count - 1;
+
+        return ReferenceEquals(section, document.Properties.Sections[document.Properties.Sections.Count - 1]);
+    }
+
+    private static HeaderFooterModel? FindHeaderFooter(IReadOnlyList<HeaderFooterModel> items, int sectionIndex, HeaderFooterType type)
+    {
+        HeaderFooterModel? exactMatch = null;
+        HeaderFooterModel? sharedMatch = null;
+        HeaderFooterModel? fallbackMatch = null;
+
+        foreach (var item in items)
+        {
+            if (item.Type != type || !HeaderFooterContentHelper.HasUsableContent(item))
+                continue;
+
+            if (item.SectionIndex == sectionIndex)
+                return item;
+
+            if (item.SectionIndex < 0 && sharedMatch == null)
+                sharedMatch = item;
+
+            fallbackMatch ??= item;
+            exactMatch ??= item;
+        }
+
+        return sharedMatch ?? exactMatch ?? fallbackMatch;
     }
 
     
@@ -1329,7 +1441,7 @@ public partial class DocumentWriter
             _writer.WriteStartElement("w", "r", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             WriteRunProperties(run);
 
-            if (run.IsPicture && run.ImageIndex >= 0)
+            if ((run.IsPicture && run.ImageIndex >= 0) || (run.IsOle && !string.IsNullOrEmpty(run.OleObjectId) && !string.IsNullOrEmpty(run.OleProgId)))
             {
                 if (run.IsOle && !string.IsNullOrEmpty(run.OleObjectId) && !string.IsNullOrEmpty(run.OleProgId))
                 {
@@ -1571,7 +1683,7 @@ public partial class DocumentWriter
     /// </summary>
     private void WriteOleObject(RunModel run)
     {
-        if (_document == null || _relationshipIds == null) return;
+        if (_document == null) return;
         var oleObj = _document.OleObjects.FirstOrDefault(o => o.ObjectId == run.OleObjectId);
         if (oleObj == null || oleObj.ObjectData.Length == 0) 
         {
@@ -1580,15 +1692,20 @@ public partial class DocumentWriter
             return;
         }
 
+        if (run.ImageIndex < 0 || run.ImageIndex >= _document.Images.Count)
+            return;
+
         int oleIndex = _document.OleObjects.IndexOf(oleObj);
-        string oleRelId = $"rId{_relationshipIds.FirstOleRId + oleIndex}";
+        var oleRelId = ResolveOleRelationshipId(oleObj.ObjectId, oleIndex);
+        if (string.IsNullOrEmpty(oleRelId))
+            return;
         
         _writer.WriteStartElement("w", "object", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
 
         // Write v:shape with v:imagedata (fallback preview)
         // For OLE embedding, Office uses legacy VML rather than DrawingML
         int imageId = run.ImageIndex + 1;
-        var imageRelId = $"rId{_relationshipIds.FirstImageRId + run.ImageIndex}";
+        var imageRelId = ResolveImageRelationshipId(run.ImageIndex);
         var image = _document.Images[run.ImageIndex];
         
         // VML shape dimensions (1 pt = 12700 EMUs)
@@ -1608,7 +1725,8 @@ public partial class DocumentWriter
         _writer.WriteAttributeString("style", string.Format(System.Globalization.CultureInfo.InvariantCulture, "width:{0:F1}pt;height:{1:F1}pt", widthPt, heightPt));
         
         _writer.WriteStartElement("v", "imagedata", "urn:schemas-microsoft-com:vml");
-        _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", imageRelId);
+        if (!string.IsNullOrEmpty(imageRelId))
+            _writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", imageRelId);
         _writer.WriteAttributeString("o", "title", "urn:schemas-microsoft-com:office:office", "");
         _writer.WriteEndElement(); // v:imagedata
         
@@ -1642,9 +1760,9 @@ public partial class DocumentWriter
             return;
         }
         var imageId = run.ImageIndex + 1;
-        
-        // Calculate relationship ID using shared logic
-        var ids = RelationshipsWriter.ComputeRelationshipIds(_document);
+        var imageRelId = ResolveImageRelationshipId(run.ImageIndex);
+        if (string.IsNullOrEmpty(imageRelId))
+            return;
         
         const int emuPerTwip = 635;
         bool hasExplicitDisplaySize = run.DisplayWidthTwips > 0 || run.DisplayHeightTwips > 0;
@@ -1760,7 +1878,7 @@ public partial class DocumentWriter
         // Blip fill
         _writer.WriteStartElement("pic", "blipFill", "http://schemas.openxmlformats.org/drawingml/2006/picture");
         _writer.WriteStartElement("a", "blip", "http://schemas.openxmlformats.org/drawingml/2006/main");
-        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", $"rId{ids.FirstImageRId + run.ImageIndex}");
+        _writer.WriteAttributeString("r", "embed", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", imageRelId);
         _writer.WriteEndElement();
         
         // Cropping
@@ -1807,6 +1925,31 @@ public partial class DocumentWriter
         _writer.WriteEndElement(); // a:graphic
         _writer.WriteEndElement(); // wp:inline
         _writer.WriteEndElement(); // w:drawing
+    }
+
+    private string? ResolveImageRelationshipId(int imageIndex)
+    {
+        if (imageIndex < 0)
+            return null;
+
+        if (_imageRelationshipOverrides != null && _imageRelationshipOverrides.TryGetValue(imageIndex, out var localRelationshipId))
+            return localRelationshipId;
+
+        if (_relationshipIds == null)
+            return null;
+
+        return $"rId{_relationshipIds.FirstImageRId + imageIndex}";
+    }
+
+    private string? ResolveOleRelationshipId(string? objectId, int oleIndex)
+    {
+        if (!string.IsNullOrEmpty(objectId) && _oleRelationshipOverrides != null && _oleRelationshipOverrides.TryGetValue(objectId, out var localRelationshipId))
+            return localRelationshipId;
+
+        if (_relationshipIds == null || oleIndex < 0)
+            return null;
+
+        return $"rId{_relationshipIds.FirstOleRId + oleIndex}";
     }
 
     private void WriteTransformAttributes(bool flipHorizontal, bool flipVertical)
@@ -2147,7 +2290,7 @@ public partial class DocumentWriter
 
     private static bool HasRenderableContent(RunModel run)
     {
-        if (run.IsPicture || run.IsField || run.IsBookmark)
+        if (run.IsPicture || run.IsField || run.IsBookmark || run.IsOle)
             return true;
 
         return !string.IsNullOrWhiteSpace(StripInlineHyperlinkFieldArtifacts(run.Text ?? string.Empty));

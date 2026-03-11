@@ -20,14 +20,19 @@ public class HeaderFooterWriter
     /// <summary>
     /// Writes a header XML file
     /// </summary>
-    public void WriteHeader(HeaderFooterModel header, DocumentModel document)
+    public void WriteHeader(
+        HeaderFooterModel header,
+        DocumentModel document,
+        IReadOnlyDictionary<int, string>? imageRelationshipIds = null,
+        IReadOnlyDictionary<string, string>? oleRelationshipIds = null)
     {
         _writer.WriteStartDocument();
         _writer.WriteStartElement("w", "hdr", Wns);
         _writer.WriteAttributeString("xmlns", "w", null, Wns);
+        WriteRootNamespaces();
 
         // Write header content
-        WriteHeaderFooterContent(header, document, isHeader: true);
+        WriteHeaderFooterContent(header, document, isHeader: true, imageRelationshipIds, oleRelationshipIds);
 
         _writer.WriteEndElement();
         _writer.WriteEndDocument();
@@ -36,14 +41,19 @@ public class HeaderFooterWriter
     /// <summary>
     /// Writes a footer XML file
     /// </summary>
-    public void WriteFooter(HeaderFooterModel footer, DocumentModel document)
+    public void WriteFooter(
+        HeaderFooterModel footer,
+        DocumentModel document,
+        IReadOnlyDictionary<int, string>? imageRelationshipIds = null,
+        IReadOnlyDictionary<string, string>? oleRelationshipIds = null)
     {
         _writer.WriteStartDocument();
         _writer.WriteStartElement("w", "ftr", Wns);
         _writer.WriteAttributeString("xmlns", "w", null, Wns);
+        WriteRootNamespaces();
 
         // Write footer content
-        WriteHeaderFooterContent(footer, document, isHeader: false);
+        WriteHeaderFooterContent(footer, document, isHeader: false, imageRelationshipIds, oleRelationshipIds);
 
         _writer.WriteEndElement();
         _writer.WriteEndDocument();
@@ -52,7 +62,12 @@ public class HeaderFooterWriter
     /// <summary>
     /// Writes header/footer content (paragraphs)
     /// </summary>
-    private void WriteHeaderFooterContent(HeaderFooterModel headerFooter, DocumentModel document, bool isHeader)
+    private void WriteHeaderFooterContent(
+        HeaderFooterModel headerFooter,
+        DocumentModel document,
+        bool isHeader,
+        IReadOnlyDictionary<int, string>? imageRelationshipIds,
+        IReadOnlyDictionary<string, string>? oleRelationshipIds)
     {
         if (!HeaderFooterContentHelper.HasUsableContent(headerFooter))
         {
@@ -68,7 +83,7 @@ public class HeaderFooterWriter
                 {
                     EnableHyperlinks = false
                 })
-                .BindDocumentContext(document);
+                .BindDocumentContext(document, null, imageRelationshipIds, oleRelationshipIds);
 
             foreach (var paragraph in headerFooter.Paragraphs)
             {
@@ -210,6 +225,18 @@ public class HeaderFooterWriter
         }
 
         _writer.WriteString(cleanedText);
+    }
+
+    private void WriteRootNamespaces()
+    {
+        _writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+        _writer.WriteAttributeString("xmlns", "wp", null, "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        _writer.WriteAttributeString("xmlns", "a", null, "http://schemas.openxmlformats.org/drawingml/2006/main");
+        _writer.WriteAttributeString("xmlns", "pic", null, "http://schemas.openxmlformats.org/drawingml/2006/picture");
+        _writer.WriteAttributeString("xmlns", "wps", null, "http://schemas.microsoft.com/office/word/2010/wordprocessingShape");
+        _writer.WriteAttributeString("xmlns", "v", null, "urn:schemas-microsoft-com:vml");
+        _writer.WriteAttributeString("xmlns", "o", null, "urn:schemas-microsoft-com:office:office");
+        _writer.WriteAttributeString("xmlns", "c", null, "http://schemas.openxmlformats.org/drawingml/2006/chart");
     }
 }
 

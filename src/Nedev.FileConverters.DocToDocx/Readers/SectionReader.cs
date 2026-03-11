@@ -124,6 +124,7 @@ public class SectionReader
         info.HeaderMargin = sep.MarginHeader;
         info.FooterMargin = sep.MarginFooter;
         info.Gutter = sep.Gutter;
+        info.TitlePage = sep.TitlePage;
         info.ColumnCount = sep.ColumnCount;
         info.ColumnSpacing = sep.ColumnSpacing;
         info.DocGridLinePitch = sep.DocGridLinePitch;

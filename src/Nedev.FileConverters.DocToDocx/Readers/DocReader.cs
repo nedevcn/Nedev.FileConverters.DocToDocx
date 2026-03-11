@@ -293,6 +293,7 @@ public class DocReader : IDisposable
         _listReader!.Read();
         Document.NumberingDefinitions = _listReader.NumberingDefinitions;
         Document.ListFormats = _listReader.ListFormats;
+        Document.ListFormatOverrides = _listReader.ListFormatOverrides;
 
         // Step 3: Read text content via Piece Table (with per-run Lid for encoding)
         int totalCp = _fibReader!.CcpText + _fibReader.CcpFtn + _fibReader.CcpHdd + _fibReader.CcpAtn + _fibReader.CcpEdn + _fibReader.CcpTxbx + _fibReader.CcpHdrTxbx;
@@ -1701,6 +1702,7 @@ public class DocReader : IDisposable
         // Map CP to paragraph index
         foreach (var sec in sectionInfos)
         {
+            sec.SectionIndex = sectionInfos.IndexOf(sec);
             sec.StartParagraphIndex = GetParagraphIndexAtCp(sec.StartCp);
 
             // A gutter margin is only meaningful when mirror/facing page
@@ -1720,6 +1722,8 @@ public class DocReader : IDisposable
         if (sectionInfos.Count > 0)
         {
             var s = sectionInfos[0];
+            if (Document.Properties.SectionStartPageNumber > 1)
+                s.PageNumberStart = Document.Properties.SectionStartPageNumber;
             Document.Properties.PageWidth = s.PageWidth;
             Document.Properties.PageHeight = s.PageHeight;
             Document.Properties.MarginTop = s.MarginTop;
