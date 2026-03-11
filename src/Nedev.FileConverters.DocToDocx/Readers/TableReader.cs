@@ -1424,6 +1424,8 @@ public class TableReader
             CharacterLength = source.CharacterLength,
             IsPicture = source.IsPicture,
             ImageIndex = source.ImageIndex,
+            DisplayWidthTwips = source.DisplayWidthTwips,
+            DisplayHeightTwips = source.DisplayHeightTwips,
             FcPic = source.FcPic,
             IsField = source.IsField,
             FieldCode = source.FieldCode,
@@ -1494,7 +1496,9 @@ public class TableReader
             IndentFirstLine = source.IndentFirstLine,
             IndentFirstLineChars = source.IndentFirstLineChars,
             SpaceBefore = source.SpaceBefore,
+            SpaceBeforeLines = source.SpaceBeforeLines,
             SpaceAfter = source.SpaceAfter,
+            SpaceAfterLines = source.SpaceAfterLines,
             LineSpacing = source.LineSpacing,
             LineSpacingMultiple = source.LineSpacingMultiple,
             KeepWithNext = source.KeepWithNext,
@@ -1688,6 +1692,7 @@ public class TableReader
             .Select(tap => tap?.CellWidths?.Length ?? 0)
             .DefaultIfEmpty(0)
             .Max();
+        var widthTemplate = GetWidthTemplate(effectiveRowTaps, tapColumnCount);
 
         if (tapColumnCount < 2)
         {
@@ -1698,10 +1703,12 @@ public class TableReader
         {
             effectiveRowTaps = rebuiltCalendarRowTaps;
             rebuiltEndParagraphIndex = calendarEndParagraphIndex;
+            widthTemplate ??= GetWidthTemplate(effectiveRowTaps, tapColumnCount);
         }
         else if (TryRebuildSequentialSingleCellTable(table, effectiveRowTaps, tapColumnCount, out var rebuiltRowTaps))
         {
             effectiveRowTaps = rebuiltRowTaps;
+            widthTemplate ??= GetWidthTemplate(effectiveRowTaps, tapColumnCount);
         }
 
         table.EndParagraphIndex = ctx.LastTableParagraphIndex;
@@ -1738,6 +1745,15 @@ public class TableReader
                 cell.Index = colIdx;
             }
         }
+
+        bool forceWidthTemplate = false;
+        if (widthTemplate == null && TryInferCalendarMonthWidthTemplate(table, out var inferredWidthTemplate))
+        {
+            widthTemplate = inferredWidthTemplate;
+            forceWidthTemplate = true;
+        }
+
+        ApplyWidthTemplate(table, widthTemplate, forceWidthTemplate);
 
         // Only set header row when the TAP data explicitly flags it.
         // Do NOT force all first rows to be headers — that's wrong for most tables.
@@ -1808,32 +1824,6 @@ public class TableReader
 
                     if (span > 1) { cell.ColumnSpan = span; col += span; }
                     else { col++; }
-                }
-            }
-        }
-        else if (table.ColumnCount > 0)
-        {
-            // Heuristic vertically merges empty cells below a content cell
-            for (int col = 0; col < table.ColumnCount; col++)
-            {
-                int row = 0;
-                while (row < table.Rows.Count)
-                {
-                    var startCell = GetCell(table, row, col);
-                    if (startCell == null || !CellHasContent(startCell)) { row++; continue; }
-
-                    int span = 1;
-                    int nextRow = row + 1;
-                    while (nextRow < table.Rows.Count)
-                    {
-                        var nextCell = GetCell(table, nextRow, col);
-                        if (nextCell == null || CellHasContent(nextCell)) break;
-                        span++;
-                        nextRow++;
-                    }
-
-                    if (span > 1) { startCell.RowSpan = span; row += span; }
-                    else { row++; }
                 }
             }
         }
@@ -1966,7 +1956,6 @@ public class TableReader
         {
             hasMergedLeadingCell = true;
         }
-
         var rebuiltRows = new List<TableRowModel>();
         var effectiveTaps = new List<TapBase?>();
         int cellCursor = 0;
@@ -2028,46 +2017,98 @@ public class TableReader
         return true;
     }
 
-    private static void ConfigureRebuiltCell(TableCellModel cell, TapBase? rowTap, int columnIndex, int columnSpan)
+    private static bool TryInferCalendarMonthWidthTemplate(TableModel table, out int[]? widthTemplate)
     {
-        cell.Index = columnIndex;
-        cell.ColumnIndex = columnIndex;
-        cell.ColumnSpan = Math.Max(1, columnSpan);
-        cell.RowSpan = Math.Max(1, cell.RowSpan);
+        widthTemplate = null;
 
-        if (rowTap?.CellWidths == null || rowTap.CellWidths.Length <= columnIndex)
-            return;
+        if (!TryGetCalendarMonthColumnPattern(table, out var contentColumns, out var separatorColumns))
+            return false;
 
-        cell.Properties ??= new TableCellProperties();
-
-        int width = 0;
-        for (int offset = 0; offset < cell.ColumnSpan && columnIndex + offset < rowTap.CellWidths.Length; offset++)
+        int preferredWidth = table.Properties?.PreferredWidth > 0 ? table.Properties.PreferredWidth : 0;
+        if (preferredWidth <= 0)
         {
-            width += rowTap.CellWidths[columnIndex + offset];
+            preferredWidth = table.Rows[0].Cells.FirstOrDefault()?.Properties?.Width ?? 0;
         }
 
-        if (width > 0)
+        if (preferredWidth <= 0 || contentColumns.Count == 0)
+            return false;
+
+        int separatorWidth = InferCalendarSeparatorWidth(table, preferredWidth, contentColumns.Count, separatorColumns.Count);
+        int contentWidth = Math.Max(1, (preferredWidth - (separatorColumns.Count * separatorWidth)) / contentColumns.Count);
+        int remainingWidth = preferredWidth - (contentWidth * contentColumns.Count) - (separatorWidth * separatorColumns.Count);
+
+        var inferred = new int[table.ColumnCount];
+        foreach (var column in contentColumns)
         {
-            cell.Properties.Width = width;
+            inferred[column] = contentWidth;
         }
+
+        foreach (var column in separatorColumns)
+        {
+            inferred[column] = separatorWidth;
+        }
+
+        var distributionColumns = separatorColumns.Count > 0 ? separatorColumns : contentColumns;
+        for (int index = 0; index < distributionColumns.Count && remainingWidth > 0; index++, remainingWidth--)
+        {
+            inferred[distributionColumns[index]]++;
+        }
+
+        widthTemplate = inferred;
+        return true;
     }
 
-    private static int GetLeadingHorizontalSpan(TapBase? rowTap, int tapColumnCount)
+    private static bool TryGetCalendarMonthColumnPattern(TableModel table, out List<int> contentColumns, out List<int> separatorColumns)
     {
-        var merges = rowTap?.CellMerges;
-        if (merges == null || merges.Length == 0 || !merges[0].HorizFirst)
-            return 0;
+        contentColumns = new List<int>();
+        separatorColumns = new List<int>();
 
-        int span = 1;
-        for (int index = 1; index < merges.Length && index < tapColumnCount; index++)
+        if (table.ColumnCount != 13 || table.Rows.Count != 13)
+            return false;
+
+        var title = table.Rows[0].Cells.FirstOrDefault()?.Paragraphs.FirstOrDefault()?.Text;
+        if (!LooksLikeMonthYear(title))
+            return false;
+
+        if (table.Rows.Count < 2 || table.Rows[1].Cells.Count != 13)
+            return false;
+
+        string[] expectedDays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        var headerTexts = table.Rows[1].Cells.Select(cell => cell.Paragraphs.FirstOrDefault()?.Text ?? string.Empty).ToList();
+        if (!headerTexts.Where((_, index) => index % 2 == 0).SequenceEqual(expectedDays, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        if (headerTexts.Where((_, index) => index % 2 == 1).Any(text => !string.IsNullOrWhiteSpace(text)))
+            return false;
+
+        for (int index = 0; index < table.ColumnCount; index++)
         {
-            if (!merges[index].HorizMerged)
-                break;
-
-            span++;
+            if (index % 2 == 0)
+            {
+                contentColumns.Add(index);
+            }
+            else
+            {
+                separatorColumns.Add(index);
+            }
         }
 
-        return span;
+        return true;
+    }
+
+    private static int InferCalendarSeparatorWidth(TableModel table, int preferredWidth, int contentColumnCount, int separatorColumnCount)
+    {
+        if (separatorColumnCount == 0)
+            return 0;
+
+        if ((table.Properties?.CellSpacing ?? 0) > 0)
+        {
+            return Math.Clamp(table.Properties!.CellSpacing, 1, preferredWidth / Math.Max(1, table.ColumnCount));
+        }
+
+        int defaultSeparatorWidth = Math.Max(1, preferredWidth / Math.Max(1, (contentColumnCount * 4) + separatorColumnCount));
+        int maxSeparatorWidth = Math.Max(1, (preferredWidth - contentColumnCount) / Math.Max(1, contentColumnCount + separatorColumnCount));
+        return Math.Min(defaultSeparatorWidth, maxSeparatorWidth);
     }
 
     private static int InferSequentialSingleCellColumnCount(TableModel table)
@@ -2148,6 +2189,103 @@ public class TableReader
         }
 
         return row;
+    }
+
+    private static void ConfigureRebuiltCell(TableCellModel cell, TapBase? rowTap, int columnIndex, int columnSpan)
+    {
+        cell.Index = columnIndex;
+        cell.ColumnIndex = columnIndex;
+        cell.ColumnSpan = Math.Max(1, columnSpan);
+        cell.RowSpan = Math.Max(1, cell.RowSpan);
+
+        if (rowTap?.CellWidths == null || rowTap.CellWidths.Length <= columnIndex)
+            return;
+
+        cell.Properties ??= new TableCellProperties();
+
+        int width = 0;
+        for (int offset = 0; offset < cell.ColumnSpan && columnIndex + offset < rowTap.CellWidths.Length; offset++)
+        {
+            width += rowTap.CellWidths[columnIndex + offset];
+        }
+
+        if (width > 0)
+        {
+            cell.Properties.Width = width;
+        }
+    }
+
+    private static int[]? GetWidthTemplate(List<TapBase?> rowTaps, int tapColumnCount)
+    {
+        if (tapColumnCount <= 0)
+            return null;
+
+        return rowTaps
+            .Select(tap => tap?.CellWidths)
+            .Where(widths => widths != null && widths.Length >= tapColumnCount)
+            .Select(widths => widths!.Take(tapColumnCount).ToArray())
+            .Where(widths => widths.Any(width => width > 0))
+            .OrderByDescending(widths => widths.Count(width => width > 0))
+            .ThenByDescending(widths => widths.Sum())
+            .FirstOrDefault();
+    }
+
+    private static void ApplyWidthTemplate(TableModel table, int[]? widthTemplate, bool overwriteExistingWidths = false)
+    {
+        if (widthTemplate == null || widthTemplate.Length == 0)
+            return;
+
+        foreach (var row in table.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (!overwriteExistingWidths && cell.Properties?.Width > 0)
+                    continue;
+
+                int startColumn = Math.Clamp(cell.ColumnIndex, 0, widthTemplate.Length - 1);
+                int endColumn = Math.Min(widthTemplate.Length, startColumn + Math.Max(1, cell.ColumnSpan));
+                int width = 0;
+
+                for (int column = startColumn; column < endColumn; column++)
+                {
+                    width += widthTemplate[column];
+                }
+
+                if (width <= 0)
+                    continue;
+
+                cell.Properties ??= new TableCellProperties();
+                cell.Properties.Width = width;
+            }
+        }
+
+        int preferredWidth = widthTemplate.Sum();
+        if (preferredWidth <= 0)
+            return;
+
+        table.Properties ??= new TableProperties();
+        if (table.Properties.PreferredWidth <= 0)
+        {
+            table.Properties.PreferredWidth = preferredWidth;
+        }
+    }
+
+    private static int GetLeadingHorizontalSpan(TapBase? rowTap, int tapColumnCount)
+    {
+        var merges = rowTap?.CellMerges;
+        if (merges == null || merges.Length == 0 || !merges[0].HorizFirst)
+            return 0;
+
+        int span = 1;
+        for (int index = 1; index < merges.Length && index < tapColumnCount; index++)
+        {
+            if (!merges[index].HorizMerged)
+                break;
+
+            span++;
+        }
+
+        return span;
     }
 
     private static TableCellModel? GetCell(TableModel table, int rowIndex, int columnIndex)

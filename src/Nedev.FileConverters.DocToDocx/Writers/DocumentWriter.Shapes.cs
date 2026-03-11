@@ -609,20 +609,18 @@ public partial class DocumentWriter
             heightEmu = (int)(heightEmu * (image.ScaleY / 100000.0));
         }
 
-        // Full-page background: first body picture or anchor/size close to page → full page dimensions
+        // Only preserve full-page sizing when the source shape already looks page-sized.
         if (_document.Properties != null)
         {
             var page = _document.Properties;
             int pageWidthEmu = page.PageWidth * emuPerTwip;
             int pageHeightEmu = page.PageHeight * emuPerTwip;
-            bool forceFirstFullPage = _firstBodyPictureNotYetWritten && pageWidthEmu > 0 && pageHeightEmu > 0;
-            bool looksFullPage = !forceFirstFullPage && (pageWidthEmu > 0 && pageHeightEmu > 0) &&
+            bool looksFullPage = (pageWidthEmu > 0 && pageHeightEmu > 0) &&
                 (widthEmu >= pageWidthEmu * 0.85 || heightEmu >= pageHeightEmu * 0.85);
-            if (forceFirstFullPage || looksFullPage)
+            if (looksFullPage)
             {
                 widthEmu = pageWidthEmu;
                 heightEmu = pageHeightEmu;
-                if (forceFirstFullPage) _firstBodyPictureNotYetWritten = false;
             }
             else
             {

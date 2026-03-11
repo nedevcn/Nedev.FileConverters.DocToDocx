@@ -378,6 +378,17 @@ public class StyleReader
         var fSemiHidden = (word4 >> 9) & 0x01;
         var fLocked = (word4 >> 10) & 0x01;
 
+        // Newer STD variants extend the 10-byte base with additional fields.
+        // If we do not honor cbSTDBaseInFile here, the subsequent style name and
+        // UPX parsing becomes misaligned, which shows up as garbled style names
+        // and lost inherited formatting.
+        if (cbSTDBase > 10)
+        {
+            var extraBaseBytes = Math.Min(cbSTDBase - 10, Math.Max(0, (int)(entryEnd - _tableReader.BaseStream.Position)));
+            if (extraBaseBytes > 0)
+                _tableReader.BaseStream.Seek(extraBaseBytes, SeekOrigin.Current);
+        }
+
         var styleName = ReadStyleName(index, sti, entryEnd);
 
         // Determine style type from sgc
@@ -429,15 +440,9 @@ public class StyleReader
             {
                 if (i == 0) // PAP UPX
                 {
-                    // First 2 bytes of PAP UPX is istd (style index)
-                    if (cbUpx > 2)
-                    {
-                        var papGrpprl = new byte[cbUpx - 2];
-                        Array.Copy(grpprl, 2, papGrpprl, 0, cbUpx - 2);
-                        var pap = new PapBase();
-                        sprmParser.ApplyToPap(papGrpprl, pap);
-                        style.ParagraphProperties = ConvertToParagraphProperties(pap);
-                    }
+                    var pap = new PapBase();
+                    sprmParser.ApplyToPap(GetParagraphStylePapGrpprl(grpprl), pap);
+                    style.ParagraphProperties = ConvertToParagraphProperties(pap);
                 }
                 else if (i == 1) // CHP UPX — some docs prefix it with a 2-byte char style ref, others do not
                 {
@@ -570,16 +575,7 @@ public class StyleReader
         if (sti == 15 || string.Equals(style.Name, "Title", StringComparison.OrdinalIgnoreCase))
         {
             style.ParagraphProperties ??= new ParagraphProperties();
-            if (style.ParagraphProperties.Alignment == ParagraphAlignment.Left)
-                style.ParagraphProperties.Alignment = ParagraphAlignment.Center;
-
             style.RunProperties ??= new RunProperties();
-            if (style.RunProperties.FontSize < 56)
-                style.RunProperties.FontSize = 56;
-            if (style.RunProperties.FontSizeCs < 56)
-                style.RunProperties.FontSizeCs = 56;
-            style.RunProperties.IsBold = true;
-            style.RunProperties.IsBoldCs = true;
         }
     }
 
@@ -662,7 +658,9 @@ public class StyleReader
             IndentFirstLine = pap.IndentFirstLine,
             IndentFirstLineChars = pap.IndentFirstLineChars,
             SpaceBefore = pap.SpaceBefore,
+            SpaceBeforeLines = pap.SpaceBeforeLines,
             SpaceAfter = pap.SpaceAfter,
+            SpaceAfterLines = pap.SpaceAfterLines,
             LineSpacing = pap.LineSpacing,
             LineSpacingMultiple = pap.LineSpacingMultiple,
             KeepWithNext = pap.KeepWithNext,
@@ -768,6 +766,20 @@ public class StyleReader
         return grpprl;
     }
 
+    private static byte[] GetParagraphStylePapGrpprl(byte[] grpprl)
+    {
+        if (grpprl.Length <= 2)
+            return grpprl;
+
+        if (LooksLikeParagraphSprm(grpprl, 0))
+            return grpprl;
+
+        if (LooksLikeParagraphSprm(grpprl, 2))
+            return SkipStylePrefix(grpprl);
+
+        return SkipStylePrefix(grpprl);
+    }
+
     private static bool LooksLikeCharacterSprm(byte[] grpprl, int offset)
     {
         if (offset < 0 || offset + 2 > grpprl.Length)
@@ -778,6 +790,25 @@ public class StyleReader
         var spra = (sprm >> 13) & 0x07;
 
         return sgc == 2 && spra <= 7 && sprm != 0;
+    }
+
+    private static bool LooksLikeParagraphSprm(byte[] grpprl, int offset)
+    {
+        if (offset < 0 || offset + 2 > grpprl.Length)
+            return false;
+
+        var sprm = BinaryPrimitives.ReadUInt16LittleEndian(grpprl.AsSpan(offset));
+        var sgc = (sprm >> 10) & 0x07;
+        var spra = (sprm >> 13) & 0x07;
+
+        return (sgc == 1 && spra <= 7 && sprm != 0) ||
+               sprm == WordConsts.SPRM_PJCN ||
+               sprm == WordConsts.SPRM_PDHIA ||
+               sprm == WordConsts.SPRM_PDPIA ||
+               sprm == WordConsts.SPRM_PDLINE ||
+               sprm == WordConsts.SPRM_PCHTO ||
+               sprm == WordConsts.SPRM_PCHTO2 ||
+               sprm == WordConsts.SPRM_PCHTO3;
     }
 
     private static TableProperties ConvertToTableProperties(TapBase tap)

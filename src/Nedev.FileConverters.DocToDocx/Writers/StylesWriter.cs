@@ -11,6 +11,24 @@ public class StylesWriter
 {
     private readonly XmlWriter _writer;
     private DocumentModel? _document;
+
+    private static int ConvertCharacterIndentToTwips(int charIndent, int fontSizeHalfPoints)
+    {
+        if (charIndent == 0)
+            return 0;
+
+        int effectiveFontSizeHalfPoints = fontSizeHalfPoints > 0 ? fontSizeHalfPoints : 24;
+        return (int)Math.Round(Math.Abs(charIndent) * effectiveFontSizeHalfPoints * 10d / 100d, MidpointRounding.AwayFromZero);
+    }
+
+    private static int ResolveIndentFontSizeHalfPoints(RunProperties? runProperties)
+    {
+        if (runProperties == null)
+            return 24;
+
+        int fontSizeHalfPoints = Math.Max(runProperties.FontSize, runProperties.FontSizeCs);
+        return fontSizeHalfPoints > 0 ? fontSizeHalfPoints : 24;
+    }
     
     public StylesWriter(XmlWriter writer)
     {
@@ -216,7 +234,9 @@ public class StylesWriter
             IndentFirstLine = source.IndentFirstLine,
             IndentFirstLineChars = source.IndentFirstLineChars,
             SpaceBefore = source.SpaceBefore,
+            SpaceBeforeLines = source.SpaceBeforeLines,
             SpaceAfter = source.SpaceAfter,
+            SpaceAfterLines = source.SpaceAfterLines,
             LineSpacing = source.LineSpacing,
             LineSpacingMultiple = source.LineSpacingMultiple,
             KeepWithNext = source.KeepWithNext,
@@ -480,12 +500,14 @@ public class StylesWriter
     private void WriteCustomStyle(StyleDefinition style)
     {
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var styleId = StyleHelper.GetParagraphStyleId(style.StyleId, style.Name);
+        var styleName = StyleHelper.GetSafeStyleName(style.Name, $"Style {style.StyleId}");
         _writer.WriteStartElement("w", "style", wNs);
         _writer.WriteAttributeString("w", "type", wNs, "paragraph");
-        _writer.WriteAttributeString("w", "styleId", wNs, StyleHelper.GetParagraphStyleId(style.StyleId, style.Name));
+        _writer.WriteAttributeString("w", "styleId", wNs, styleId);
         
         _writer.WriteStartElement("w", "name", wNs);
-        _writer.WriteAttributeString("w", "val", wNs, style.Name ?? $"Style {style.StyleId}");
+        _writer.WriteAttributeString("w", "val", wNs, styleName);
         _writer.WriteEndElement();
 
         if (style.BasedOn.HasValue)
@@ -624,12 +646,14 @@ public class StylesWriter
     private void WriteCustomTableStyle(StyleDefinition style)
     {
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var styleId = StyleHelper.GetTableStyleId(style.StyleId, style.Name);
+        var styleName = StyleHelper.GetSafeStyleName(style.Name, $"Table Style {style.StyleId}");
         _writer.WriteStartElement("w", "style", wNs);
         _writer.WriteAttributeString("w", "type", wNs, "table");
-        _writer.WriteAttributeString("w", "styleId", wNs, StyleHelper.GetTableStyleId(style.StyleId, style.Name));
+        _writer.WriteAttributeString("w", "styleId", wNs, styleId);
         
         _writer.WriteStartElement("w", "name", wNs);
-        _writer.WriteAttributeString("w", "val", wNs, style.Name ?? $"Table Style {style.StyleId}");
+        _writer.WriteAttributeString("w", "val", wNs, styleName);
         _writer.WriteEndElement();
 
         var basedOnId = "TableNormal";
@@ -701,12 +725,14 @@ public class StylesWriter
     private void WriteCustomCharacterStyle(StyleDefinition style)
     {
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var styleId = StyleHelper.GetCharacterStyleId(style.StyleId, style.Name);
+        var styleName = StyleHelper.GetSafeStyleName(style.Name, $"Character Style {style.StyleId}");
         _writer.WriteStartElement("w", "style", wNs);
         _writer.WriteAttributeString("w", "type", wNs, "character");
-        _writer.WriteAttributeString("w", "styleId", wNs, StyleHelper.GetCharacterStyleId(style.StyleId, style.Name));
+        _writer.WriteAttributeString("w", "styleId", wNs, styleId);
         
         _writer.WriteStartElement("w", "name", wNs);
-        _writer.WriteAttributeString("w", "val", wNs, style.Name ?? $"Character Style {style.StyleId}");
+        _writer.WriteAttributeString("w", "val", wNs, styleName);
         _writer.WriteEndElement();
 
         _writer.WriteStartElement("w", "basedOn", wNs);
@@ -772,12 +798,16 @@ public class StylesWriter
 
         // Spacing
         bool hasExplicitLineSpacing = props.LineSpacing != 240 || props.LineSpacingMultiple != 1;
-        if (props.SpaceBefore > 0 || props.SpaceAfter > 0 || hasExplicitLineSpacing)
+        if (props.SpaceBefore > 0 || props.SpaceBeforeLines > 0 || props.SpaceAfter > 0 || props.SpaceAfterLines > 0 || hasExplicitLineSpacing)
         {
             _writer.WriteStartElement("w", "spacing", wNs);
-            if (props.SpaceBefore > 0)
+            if (props.SpaceBeforeLines > 0)
+                _writer.WriteAttributeString("w", "beforeLines", wNs, props.SpaceBeforeLines.ToString());
+            else if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
-            if (props.SpaceAfter > 0)
+            if (props.SpaceAfterLines > 0)
+                _writer.WriteAttributeString("w", "afterLines", wNs, props.SpaceAfterLines.ToString());
+            else if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
             if (hasExplicitLineSpacing)
             {
@@ -805,22 +835,39 @@ public class StylesWriter
         // Indentation
         if (props.IndentLeft != 0 || props.IndentLeftChars != 0 || props.IndentRight != 0 || props.IndentRightChars != 0 || props.IndentFirstLine != 0 || props.IndentFirstLineChars != 0)
         {
+            int fontSizeHalfPoints = ResolveIndentFontSizeHalfPoints(null);
             _writer.WriteStartElement("w", "ind", wNs);
-            if (props.IndentLeft != 0)
-                _writer.WriteAttributeString("w", "left", wNs, props.IndentLeft.ToString());
+            int indentLeft = props.IndentLeft != 0
+                ? props.IndentLeft
+                : ConvertCharacterIndentToTwips(props.IndentLeftChars, fontSizeHalfPoints);
+            if (indentLeft != 0)
+                _writer.WriteAttributeString("w", "left", wNs, indentLeft.ToString());
             if (props.IndentLeftChars != 0)
                 _writer.WriteAttributeString("w", "leftChars", wNs, props.IndentLeftChars.ToString());
-            if (props.IndentRight != 0)
-                _writer.WriteAttributeString("w", "right", wNs, props.IndentRight.ToString());
+            int indentRight = props.IndentRight != 0
+                ? props.IndentRight
+                : ConvertCharacterIndentToTwips(props.IndentRightChars, fontSizeHalfPoints);
+            if (indentRight != 0)
+                _writer.WriteAttributeString("w", "right", wNs, indentRight.ToString());
             if (props.IndentRightChars != 0)
                 _writer.WriteAttributeString("w", "rightChars", wNs, props.IndentRightChars.ToString());
 
             if (props.IndentFirstLineChars > 0)
             {
+                int firstLine = props.IndentFirstLine > 0
+                    ? props.IndentFirstLine
+                    : ConvertCharacterIndentToTwips(props.IndentFirstLineChars, fontSizeHalfPoints);
+                if (firstLine > 0)
+                    _writer.WriteAttributeString("w", "firstLine", wNs, firstLine.ToString());
                 _writer.WriteAttributeString("w", "firstLineChars", wNs, props.IndentFirstLineChars.ToString());
             }
             else if (props.IndentFirstLineChars < 0)
             {
+                int hanging = props.IndentFirstLine < 0
+                    ? Math.Abs(props.IndentFirstLine)
+                    : ConvertCharacterIndentToTwips(props.IndentFirstLineChars, fontSizeHalfPoints);
+                if (hanging > 0)
+                    _writer.WriteAttributeString("w", "hanging", wNs, hanging.ToString());
                 _writer.WriteAttributeString("w", "hangingChars", wNs, Math.Abs(props.IndentFirstLineChars).ToString());
             }
             else if (props.IndentFirstLine > 0)

@@ -131,6 +131,7 @@ public class SectionInfo
     public byte BreakCode { get; set; } // SBkc
     public short ColumnCount { get; set; } = 1;
     public int ColumnSpacing { get; set; }
+    public int DocGridLinePitch { get; set; }
     public byte VerticalAlignment { get; set; } // SVjc
     public HeaderFooterReferenceType HeaderReference { get; set; } = HeaderFooterReferenceType.Default;
     public HeaderFooterReferenceType FooterReference { get; set; } = HeaderFooterReferenceType.Default;
@@ -224,6 +225,12 @@ public class RunModel
     /// <summary>Image index in document.Images list</summary>
     public int ImageIndex { get; set; } = -1;
 
+    /// <summary>Optional display width for this picture occurrence, in twips.</summary>
+    public int DisplayWidthTwips { get; set; }
+
+    /// <summary>Optional display height for this picture occurrence, in twips.</summary>
+    public int DisplayHeightTwips { get; set; }
+
     /// <summary>File character offset in Data stream for picture (from sprmCPicLocation).</summary>
     public uint FcPic { get; set; }
 
@@ -281,7 +288,9 @@ public class ParagraphProperties
     public int IndentFirstLine { get; set; }
     public int IndentFirstLineChars { get; set; }
     public int SpaceBefore { get; set; }
+    public int SpaceBeforeLines { get; set; }
     public int SpaceAfter { get; set; }
+    public int SpaceAfterLines { get; set; }
     public int LineSpacing { get; set; } = 240;
     public int LineSpacingMultiple { get; set; } = 1;
     public bool KeepWithNext { get; set; }
@@ -328,8 +337,16 @@ public class ParagraphProperties
         if (IndentRightChars == 0 && baseProps.IndentRightChars != 0) IndentRightChars = baseProps.IndentRightChars;
         if (IndentFirstLine == 0 && baseProps.IndentFirstLine != 0) IndentFirstLine = baseProps.IndentFirstLine;
         if (IndentFirstLineChars == 0 && baseProps.IndentFirstLineChars != 0) IndentFirstLineChars = baseProps.IndentFirstLineChars;
-        if (SpaceBefore == 0 && baseProps.SpaceBefore != 0) SpaceBefore = baseProps.SpaceBefore;
-        if (SpaceAfter == 0 && baseProps.SpaceAfter != 0) SpaceAfter = baseProps.SpaceAfter;
+        if (SpaceBefore == 0 && SpaceBeforeLines == 0)
+        {
+            if (baseProps.SpaceBefore != 0) SpaceBefore = baseProps.SpaceBefore;
+            else if (baseProps.SpaceBeforeLines != 0) SpaceBeforeLines = baseProps.SpaceBeforeLines;
+        }
+        if (SpaceAfter == 0 && SpaceAfterLines == 0)
+        {
+            if (baseProps.SpaceAfter != 0) SpaceAfter = baseProps.SpaceAfter;
+            else if (baseProps.SpaceAfterLines != 0) SpaceAfterLines = baseProps.SpaceAfterLines;
+        }
         if (LineSpacing == 240 && baseProps.LineSpacing != 240) LineSpacing = baseProps.LineSpacing;
         if (LineSpacingMultiple == 1 && baseProps.LineSpacingMultiple != 1) LineSpacingMultiple = baseProps.LineSpacingMultiple;
 

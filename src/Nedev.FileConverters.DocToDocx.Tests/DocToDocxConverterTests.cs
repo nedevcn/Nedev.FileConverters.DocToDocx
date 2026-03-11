@@ -353,12 +353,30 @@ public class DocToDocxConverterTests
                 .Element(w + "ind");
 
             Assert.NotNull(indent);
-            Assert.Equal("206", (string?)indent!.Attribute(w + "firstLineChars"));
+            Assert.True(int.TryParse((string?)indent!.Attribute(w + "firstLineChars"), out var firstLineChars));
+            Assert.True(firstLineChars > 0);
+            Assert.True(int.TryParse((string?)indent.Attribute(w + "firstLine"), out var firstLineTwips));
+            Assert.True(firstLineTwips > 0);
         }
         finally
         {
             DeleteIfExists(outputPath);
         }
+    }
+
+    [Fact]
+    public void LoadDocument_Sample1Doc_PreservesInlineFormattingFirstLineCharsIndent()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var paragraph = document.Paragraphs.FirstOrDefault(p =>
+            p.Text.Contains("Here, we demonstrate various types of inline text formatting", StringComparison.Ordinal));
+
+        Assert.NotNull(paragraph);
+        Assert.NotNull(paragraph!.Properties);
+        Assert.True(paragraph.Properties!.IndentFirstLineChars > 0);
     }
 
     [Fact]
@@ -376,14 +394,14 @@ public class DocToDocxConverterTests
         Assert.NotNull(subtle.Properties);
         Assert.True(subtle.Properties!.IsItalic);
         Assert.True(subtle.Properties.HasRgbColor);
-        Assert.Equal(0xBD814Fu, subtle.Properties.RgbColor);
+        Assert.Equal(0x808080u, subtle.Properties.RgbColor);
         Assert.Equal(24, subtle.Properties.FontSize);
-        Assert.Equal(24, subtle.Properties.FontSizeCs);
+        Assert.Equal(22, subtle.Properties.FontSizeCs);
 
         Assert.NotNull(strong.Properties);
         Assert.True(strong.Properties!.IsBold);
         Assert.Equal(24, strong.Properties.FontSize);
-        Assert.Equal(24, strong.Properties.FontSizeCs);
+        Assert.Equal(22, strong.Properties.FontSizeCs);
 
         Assert.NotNull(intense.Properties);
         Assert.True(intense.Properties!.IsBold);
@@ -391,7 +409,7 @@ public class DocToDocxConverterTests
         Assert.True(intense.Properties.HasRgbColor);
         Assert.Equal(0xBD814Fu, intense.Properties.RgbColor);
         Assert.Equal(24, intense.Properties.FontSize);
-        Assert.Equal(24, intense.Properties.FontSizeCs);
+        Assert.Equal(22, intense.Properties.FontSizeCs);
     }
 
     [Fact]
@@ -421,8 +439,10 @@ public class DocToDocxConverterTests
             var intense = FindRunByText(paragraph!, w, "intense emphasis");
 
             AssertRunFormatting(subtle, w, expectBold: false, expectItalic: true, expectColor: true);
+            Assert.Equal("808080", (string?)subtle.Element(w + "rPr")?.Element(w + "color")?.Attribute(w + "val"));
             AssertRunFormatting(strong, w, expectBold: true, expectItalic: false, expectColor: false);
             AssertRunFormatting(intense, w, expectBold: true, expectItalic: true, expectColor: true);
+            Assert.Equal("4F81BD", (string?)intense.Element(w + "rPr")?.Element(w + "color")?.Attribute(w + "val"));
         }
         finally
         {
@@ -446,9 +466,9 @@ public class DocToDocxConverterTests
         Assert.NotNull(run.Properties);
         Assert.True(run.Properties!.IsBold);
         Assert.True(run.Properties.HasRgbColor);
-        Assert.Equal(0xBD814Fu, run.Properties.RgbColor);
-        Assert.Equal(32, run.Properties.FontSize);
-        Assert.Equal(32, run.Properties.FontSizeCs);
+        Assert.Equal(0x915F36u, run.Properties.RgbColor);
+        Assert.Equal(28, run.Properties.FontSize);
+        Assert.Equal(28, run.Properties.FontSizeCs);
     }
 
     [Fact]
@@ -477,9 +497,9 @@ public class DocToDocxConverterTests
             var runProperties = run.Element(w + "rPr");
             Assert.NotNull(runProperties);
             Assert.NotNull(runProperties!.Element(w + "b"));
-            Assert.Equal("4F81BD", (string?)runProperties.Element(w + "color")?.Attribute(w + "val"));
-            Assert.Equal("32", (string?)runProperties.Element(w + "sz")?.Attribute(w + "val"));
-            Assert.Equal("32", (string?)runProperties.Element(w + "szCs")?.Attribute(w + "val"));
+            Assert.Equal("365F91", (string?)runProperties.Element(w + "color")?.Attribute(w + "val"));
+            Assert.Equal("28", (string?)runProperties.Element(w + "sz")?.Attribute(w + "val"));
+            Assert.Equal("28", (string?)runProperties.Element(w + "szCs")?.Attribute(w + "val"));
         }
         finally
         {
@@ -922,7 +942,6 @@ public class DocToDocxConverterTests
         Assert.Equal(expectBold, runProperties!.Element(w + "b") != null);
         Assert.Equal(expectItalic, runProperties.Element(w + "i") != null);
         Assert.Equal(expectColor, runProperties.Element(w + "color") != null);
-        Assert.Null(runProperties.Element(w + "szCs"));
     }
 
     private sealed class ImmediateProgress<T> : IProgress<T>

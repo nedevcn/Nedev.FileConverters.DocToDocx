@@ -103,6 +103,39 @@ public class TextReader
     }
 
     /// <summary>
+    /// Gets any CLX PRC/PRM-based paragraph properties for the piece containing the supplied CP.
+    /// </summary>
+    public PapBase? GetPieceParagraphPropertiesAtCp(int cp)
+    {
+        var piece = _pieces.FirstOrDefault(p => cp >= p.CpStart && cp < p.CpEnd);
+        if (piece == null || piece.Prm == 0)
+            return null;
+
+        var candidateKeys = new[]
+        {
+            piece.Prm,
+            (ushort)(piece.Prm & 0xFFFE),
+            (ushort)(piece.Prm >> 1),
+            (ushort)(piece.Prm & 0x7FFF),
+            (ushort)((piece.Prm & 0x7FFF) >> 1)
+        };
+
+        byte[]? grpprl = null;
+        foreach (var candidateKey in candidateKeys)
+        {
+            if (_piecePropertyModifiers.TryGetValue(candidateKey, out grpprl))
+                break;
+        }
+
+        if (grpprl == null)
+            return null;
+
+        var pap = new PapBase();
+        new SprmParser(_wordDocReader, 0).ApplyToPap(grpprl, pap);
+        return pap;
+    }
+
+    /// <summary>
     /// Reads the complete text content from the main document body.
     /// </summary>
     public string ReadText()

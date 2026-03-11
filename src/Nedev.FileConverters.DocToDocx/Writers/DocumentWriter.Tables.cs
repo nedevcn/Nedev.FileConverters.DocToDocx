@@ -35,20 +35,7 @@ public partial class DocumentWriter
             ? table.ColumnCount
             : (table.Rows.Any() ? table.Rows.Max(r => r.Cells.Count) : 0);
         
-        // Calculate column widths by finding the maximum width for each column across all rows
-        var columnWidths = new int[columnCount];
-        for (int colIdx = 0; colIdx < columnCount; colIdx++)
-        {
-            int maxWidth = 0;
-            foreach (var row in table.Rows)
-            {
-                if (colIdx < row.Cells.Count && row.Cells[colIdx].Properties?.Width > 0)
-                {
-                    maxWidth = Math.Max(maxWidth, row.Cells[colIdx].Properties!.Width);
-                }
-            }
-            columnWidths[colIdx] = maxWidth;
-        }
+        var columnWidths = CalculateColumnWidths(table, columnCount);
         
         for (int i = 0; i < columnCount; i++)
         {
@@ -67,10 +54,143 @@ public partial class DocumentWriter
         // Write each row
         foreach (var row in table.Rows)
         {
-            WriteTableRow(row, table);
+            WriteTableRow(row, table, columnWidths);
         }
         
         _writer.WriteEndElement(); // w:tbl
+    }
+
+    private int[] CalculateColumnWidths(TableModel table, int columnCount)
+    {
+        var columnWidths = new int[columnCount];
+
+        foreach (var row in table.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (cell.Properties?.Width is not > 0 || cell.ColumnIndex < 0 || cell.ColumnIndex >= columnCount)
+                    continue;
+
+                int span = Math.Max(1, cell.ColumnSpan);
+                if (span == 1)
+                {
+                    columnWidths[cell.ColumnIndex] = Math.Max(columnWidths[cell.ColumnIndex], cell.Properties.Width);
+                }
+            }
+        }
+
+        foreach (var row in table.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (cell.Properties?.Width is not > 0 || cell.ColumnIndex < 0 || cell.ColumnIndex >= columnCount)
+                    continue;
+
+                int span = Math.Max(1, cell.ColumnSpan);
+                if (span == 1)
+                    continue;
+
+                int endColumn = Math.Min(columnCount, cell.ColumnIndex + span);
+                int knownWidth = 0;
+                int unknownCount = 0;
+                for (int columnIndex = cell.ColumnIndex; columnIndex < endColumn; columnIndex++)
+                {
+                    if (columnWidths[columnIndex] > 0)
+                    {
+                        knownWidth += columnWidths[columnIndex];
+                    }
+                    else
+                    {
+                        unknownCount++;
+                    }
+                }
+
+                if (unknownCount == 0)
+                    continue;
+
+                int remainingWidth = cell.Properties.Width - knownWidth;
+                if (remainingWidth <= 0)
+                    continue;
+
+                int widthPerUnknownColumn = Math.Max(1, remainingWidth / unknownCount);
+                int remainder = Math.Max(0, remainingWidth % unknownCount);
+                for (int columnIndex = cell.ColumnIndex; columnIndex < endColumn; columnIndex++)
+                {
+                    if (columnWidths[columnIndex] > 0)
+                        continue;
+
+                    columnWidths[columnIndex] = widthPerUnknownColumn + (remainder > 0 ? 1 : 0);
+                    if (remainder > 0)
+                    {
+                        remainder--;
+                    }
+                }
+            }
+        }
+
+        if (columnWidths.All(width => width == 0) && TryInferCalendarColumnWidths(table, out var inferredColumnWidths))
+        {
+            return inferredColumnWidths;
+        }
+
+        return columnWidths;
+    }
+        
+    private bool TryInferCalendarColumnWidths(TableModel table, out int[] columnWidths)
+    {
+        columnWidths = Array.Empty<int>();
+
+        if (table.ColumnCount != 13 || table.Rows.Count < 2 || table.Rows[0].Cells.Count != 1 || table.Rows[1].Cells.Count != 13)
+            return false;
+
+        var title = table.Rows[0].Cells[0].Paragraphs.FirstOrDefault()?.Text;
+        if (string.IsNullOrWhiteSpace(title) || !System.Text.RegularExpressions.Regex.IsMatch(title.Trim(), "^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return false;
+
+        string[] expectedDays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        var headerTexts = table.Rows[1].Cells.Select(cell => cell.Paragraphs.FirstOrDefault()?.Text ?? string.Empty).ToList();
+        if (!headerTexts.Where((_, index) => index % 2 == 0).SequenceEqual(expectedDays, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        if (headerTexts.Where((_, index) => index % 2 == 1).Any(text => !string.IsNullOrWhiteSpace(text)))
+            return false;
+
+        int pageWidth = _document?.Properties.PageWidth ?? 12240;
+        int marginLeft = _document?.Properties.MarginLeft ?? 1440;
+        int marginRight = _document?.Properties.MarginRight ?? 1440;
+        int preferredWidth = table.Properties?.PreferredWidth > 0
+            ? table.Properties.PreferredWidth
+            : Math.Max(1, pageWidth - marginLeft - marginRight);
+        preferredWidth = Math.Max(1, preferredWidth);
+
+        int separatorCount = 6;
+        int contentCount = 7;
+        int separatorWidth = table.Properties?.CellSpacing ?? 0;
+        if (separatorWidth <= 0)
+        {
+            separatorWidth = Math.Max(1, preferredWidth / Math.Max(1, (contentCount * 4) + separatorCount));
+        }
+
+        int contentWidth = Math.Max(1, (preferredWidth - (separatorCount * separatorWidth)) / contentCount);
+        int remaining = preferredWidth - (contentWidth * contentCount) - (separatorWidth * separatorCount);
+
+        columnWidths = new int[13];
+        for (int index = 0; index < columnWidths.Length; index++)
+        {
+            columnWidths[index] = index % 2 == 0 ? contentWidth : separatorWidth;
+        }
+
+        for (int index = 1; index < columnWidths.Length && remaining > 0; index += 2, remaining--)
+        {
+            columnWidths[index]++;
+        }
+
+        for (int index = 0; index < columnWidths.Length && remaining > 0; index += 2, remaining--)
+        {
+            columnWidths[index]++;
+        }
+
+        return columnWidths.All(width => width > 0);
     }
 
     /// <summary>
@@ -294,7 +414,7 @@ public partial class DocumentWriter
     /// <summary>
     /// Writes a table row.
     /// </summary>
-    private void WriteTableRow(TableRowModel row, TableModel table)
+    private void WriteTableRow(TableRowModel row, TableModel table, int[] columnWidths)
     {
         Logger.Debug($"DocumentWriter.WriteTableRow START: tableStart={table.StartParagraphIndex} rowIndex={row.Index} cells={row.Cells.Count}");
         _writer.WriteStartElement("w", "tr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
@@ -341,7 +461,7 @@ public partial class DocumentWriter
                 // Otherwise, the number of columns in the row exceeds the table grid, causing severe corruption.
                 continue;
             }
-            WriteTableCell(cell, row, table);
+            WriteTableCell(cell, row, table, columnWidths);
         }
         
         _writer.WriteEndElement(); // w:tr
@@ -353,7 +473,7 @@ public partial class DocumentWriter
     /// RowSpan and cells in previous rows; for horizontal merges we emit
     /// w:gridSpan on the first cell and suppress content in covered cells.
     /// </summary>
-    private void WriteTableCell(TableCellModel cell, TableRowModel row, TableModel table)
+    private void WriteTableCell(TableCellModel cell, TableRowModel row, TableModel table, int[] columnWidths)
     {
         _writer.WriteStartElement("w", "tc", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
 
@@ -361,7 +481,18 @@ public partial class DocumentWriter
         bool isVmergeStart = cell.RowSpan > 1;
         bool isVmergeContinue = !isVmergeStart && IsCoveredByVerticalMerge(table, row.Index, cell.ColumnIndex);
         
-        bool hasTcPr = cell.Properties?.Width > 0 || cell.ColumnSpan > 1 || cell.RowSpan > 1 || isVmergeContinue ||
+        int effectiveCellWidth = cell.Properties?.Width ?? 0;
+        if (effectiveCellWidth <= 0)
+        {
+            int startColumn = Math.Clamp(cell.ColumnIndex, 0, Math.Max(0, columnWidths.Length - 1));
+            int endColumn = Math.Min(columnWidths.Length, startColumn + Math.Max(1, cell.ColumnSpan));
+            for (int columnIndex = startColumn; columnIndex < endColumn; columnIndex++)
+            {
+                effectiveCellWidth += columnWidths[columnIndex];
+            }
+        }
+
+        bool hasTcPr = effectiveCellWidth > 0 || cell.ColumnSpan > 1 || cell.RowSpan > 1 || isVmergeContinue ||
                        cell.Properties?.BorderTop != null || cell.Properties?.BorderBottom != null ||
                        cell.Properties?.BorderLeft != null || cell.Properties?.BorderRight != null ||
                        cell.Properties?.Shading != null ||
@@ -374,9 +505,9 @@ public partial class DocumentWriter
             _writer.WriteStartElement("w", "tcPr", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
             
             // Cell width
-            if (cell.Properties?.Width > 0)
+            if (effectiveCellWidth > 0)
             {
-                var cellWidth = Math.Clamp(cell.Properties.Width, 1, 31680);
+                var cellWidth = Math.Clamp(effectiveCellWidth, 1, 31680);
                 _writer.WriteStartElement("w", "tcW", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
                 _writer.WriteAttributeString("w", "w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", cellWidth.ToString());
                 _writer.WriteAttributeString("w", "type", "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "dxa");

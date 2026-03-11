@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using System.IO;
 using System.Text;
 using System.Xml;
@@ -107,6 +108,37 @@ public class ThemeReaderTests
         Assert.Contains("eastAsia=\"SimSun\"", xml);
         Assert.Contains("cs=\"Arial\"", xml);
     }
+
+      [Fact]
+      public void StylesWriter_SanitizesInvalidCharactersInCustomStyleNames()
+      {
+        var document = new DocumentModel
+        {
+          Styles = new StyleSheet
+          {
+            Styles =
+            {
+              new StyleDefinition
+              {
+                StyleId = 42,
+                Name = "Bad\0 Style",
+                Type = StyleType.Paragraph,
+                ParagraphProperties = new ParagraphProperties()
+              }
+            }
+          }
+        };
+
+        using var ms = new MemoryStream();
+        using var writer = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = Encoding.UTF8 });
+        new StylesWriter(writer).WriteStyles(document);
+        writer.Flush();
+
+        var xml = Encoding.UTF8.GetString(ms.ToArray());
+        Assert.DoesNotContain("\0", xml, StringComparison.Ordinal);
+        Assert.Contains("styleId=\"BadStyle\"", xml, StringComparison.Ordinal);
+        Assert.Contains("w:val=\"Bad Style\"", xml, StringComparison.Ordinal);
+      }
 
       [Fact]
       public void StylesWriter_UsesThemeColorsForTableBordersAndShading()

@@ -264,6 +264,9 @@ public class SprmParser
             case 0x4A51:
                 chp.FontIndex = (short)sprm.Operand;
                 return;
+            case 0x4A30:
+                chp.StyleId = (ushort)sprm.Operand;
+                return;
             case 0x4A5E:
                 chp.FontIndexCs = (short)sprm.Operand;
                 return;
@@ -340,6 +343,38 @@ public class SprmParser
     {
         switch (sprm.Code)
         {
+            case 0x2403: // sprmPJc80
+            case 0x2461: // sprmPJc
+                pap.Justification = (byte)sprm.Operand;
+                return;
+            case 0x2405: // sprmPFKeep
+                pap.KeepTogether = sprm.Operand != 0;
+                return;
+            case 0x2406: // sprmPFKeepFollow
+                pap.KeepWithNext = sprm.Operand != 0;
+                return;
+            case 0x2407: // sprmPFPageBreakBefore
+                pap.PageBreakBefore = sprm.Operand != 0;
+                return;
+            case 0x840E: // sprmPDxaRight80
+                pap.IndentRight = (short)sprm.Operand;
+                return;
+            case 0x840F: // sprmPDxaLeft80
+                pap.IndentLeft = (short)sprm.Operand;
+                return;
+            case 0x8411: // sprmPDxaLeft180
+                pap.IndentFirstLine = (short)sprm.Operand;
+                return;
+            case 0x4458: // sprmPDylBefore
+                pap.SpaceBeforeLines = (short)sprm.Operand;
+                pap.SpaceBefore = 0;
+                return;
+            case 0x4459: // sprmPDylAfter
+                pap.SpaceAfterLines = (short)sprm.Operand;
+                pap.SpaceAfter = 0;
+                return;
+            case 0x6467: // sprmPRsid
+                return;
             case WordConsts.SPRM_PCHTO:
                 pap.IndentFirstLineChars = (byte)sprm.Operand;
                 return;
@@ -361,8 +396,8 @@ public class SprmParser
         {
             // --- Word 97+ (16-bit) SPRM Opcodes ---
             case 0x00: pap.StyleId = (ushort)sprm.Operand; break; // sprmPIstd
-                case 0x03: pap.KeepTogether = sprm.Operand != 0; break; // sprmPFKeep
-                case 0x04: pap.KeepWithNext = sprm.Operand != 0; break; // sprmPFKeepFollow
+            case 0x03: break;
+            case 0x04: break;
             case 0x05: pap.PageBreakBefore = sprm.Operand != 0; break; // sprmPPageBreakBefore
             case 0x0B: pap.ListFormatId = (int)(short)sprm.Operand; break; // sprmPIlfo
             case 0x0A: pap.ListLevel = (byte)sprm.Operand; break; // sprmPIlvl
@@ -378,7 +413,7 @@ public class SprmParser
             case 0x16: pap.InTable = sprm.Operand != 0; break; // sprmPFInTable (0x2416 -> code 0x16)
             case 0x40: pap.OutlineLevel = (byte)sprm.Operand; break; // sprmPOutlineLvl
             case 0x49: pap.Itap = (int)(short)sprm.Operand; break; // sprmPItap (0x6649 -> code 0x49)
-            case 0x61: pap.Justification = (byte)sprm.Operand; break; // sprmPJc
+            case 0x61: break;
             // sprmPShd — paragraph shading (SHDOperand or Shd)
             case 0x0C:
                 if (sprm.VariableOperand != null && sprm.VariableOperand.Length >= 4)
@@ -402,9 +437,9 @@ public class SprmParser
 
             // --- Word 6 (8-bit) SPRM Opcodes (Fallbacks) ---
             case 0x02: pap.StyleId = (ushort)sprm.Operand; break;
-            case 0x15: pap.LineSpacing = (int)sprm.Operand; break;
+            case 0x15: break;
             // case 0x16: pap.SpaceBefore = (int)sprm.Operand; break; // Conflicts with Word 97 sprmPFInTable
-            case 0x17: pap.SpaceAfter = (int)sprm.Operand; break;
+            case 0x17: break;
         }
     }
 
@@ -581,6 +616,11 @@ public class SprmParser
         }
     }
 
+    private static int ConvertHundredthsOfLineToTwips(byte value)
+    {
+        return (value * 240 + 50) / 100;
+    }
+
     /// <summary>
     /// Parses SHD/SHDOperand: full Shd (cvFore 4, cvBack 4, ipat 2) or legacy icoFore/icoBack (2+2).
     /// COLORREF is 0x00BBGGRR; we output RGB as int for ColorHelper.
@@ -734,6 +774,7 @@ public class SprmParser
             case 0x16: sep.MarginFooter = (int)(short)sprm.Operand; break; // sprmSDzaHdrBottom
             case 0x17: sep.Gutter = (int)(short)sprm.Operand; break; // sprmSDxaGutter
             case 0x2A: sep.VerticalAlignment = (byte)sprm.Operand; break; // sprmSVjc
+            case 0x31: sep.DocGridLinePitch = (int)(short)sprm.Operand; break; // sprmSDyaLinePitch
         }
     }
 
@@ -749,6 +790,7 @@ public class SprmParser
 public class ChpBase
 {
     public short FontIndex { get; set; } = -1;
+    public ushort StyleId { get; set; }
     public byte FontSize { get; set; } = 24;
     public byte FontSizeCs { get; set; } = 24;
     public bool IsBold { get; set; }
@@ -814,7 +856,9 @@ public class PapBase
     public int LineSpacing { get; set; } = 240;
     public int LineSpacingMultiple { get; set; } = 1;
     public int SpaceBefore { get; set; }
+    public int SpaceBeforeLines { get; set; }
     public int SpaceAfter { get; set; }
+    public int SpaceAfterLines { get; set; }
     // Phase 3 additions
     public byte OutlineLevel { get; set; } = 9; // 9 = body text
     public int NestIndent { get; set; }
@@ -950,6 +994,7 @@ public class SepBase
     public bool TitlePage { get; set; } // SFTitlePage
     public short ColumnCount { get; set; } = 1; // SCColumns
     public int ColumnSpacing { get; set; } // SDxaColumns
+    public int DocGridLinePitch { get; set; }
     public int PageWidth { get; set; } = 11906; // 21cm (A4)
     public int PageHeight { get; set; } = 16838; // 29.7cm (A4)
     public int MarginLeft { get; set; } = 1440; // 1"

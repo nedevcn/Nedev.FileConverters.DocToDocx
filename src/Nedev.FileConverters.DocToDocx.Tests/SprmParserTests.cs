@@ -157,6 +157,30 @@ public class SprmParserTests
     }
 
     [Fact]
+    public void ApplyToPap_DecodesLegacyParagraphSpacingAndJustificationSprms()
+    {
+        using var stream = new MemoryStream();
+        using var reader = new BinaryReader(stream);
+        var parser = new SprmParser(reader, 0);
+        var pap = new PapBase();
+        var applyMethod = typeof(SprmParser).GetMethod("ApplyPapSprm", BindingFlags.Instance | BindingFlags.NonPublic);
+        var sprmType = typeof(SprmParser).GetNestedType("Sprm", BindingFlags.NonPublic);
+
+        Assert.NotNull(applyMethod);
+        Assert.NotNull(sprmType);
+
+        ApplySprm(parser, sprmType!, applyMethod!, pap, 0x2403, 2);
+        ApplySprm(parser, sprmType!, applyMethod!, pap, 0x4459, 51);
+        ApplySprm(parser, sprmType!, applyMethod!, pap, 0x6412, 0x00010114);
+
+        Assert.Equal(2, pap.Justification);
+        Assert.Equal(276, pap.LineSpacing);
+        Assert.Equal(1, pap.LineSpacingMultiple);
+        Assert.Equal(51, pap.SpaceAfterLines);
+        Assert.Equal(0, pap.SpaceAfter);
+    }
+
+    [Fact]
     public void ApplyToChp_MetadataSprms_DoNotTriggerWord6FallbackFormatting()
     {
         using var stream = new MemoryStream();
@@ -330,6 +354,8 @@ public class SprmParserTests
         report.AppendLine($"fcPlcfBteChpx=0x{fib.FcPlcfBteChpx:X} lcbPlcfBteChpx=0x{fib.LcbPlcfBteChpx:X}");
         report.AppendLine($"papBte={DescribeBtePages(tableReader, wordDocReader, fib.FcPlcfBtePapx, fib.LcbPlcfBtePapx)}");
         report.AppendLine($"papFkpCache={DescribePapCache(papCache)}");
+        foreach (var line in GetPapFkpEntriesForCp(docReader, rightCp))
+            report.AppendLine($"rightPapFkp={line}");
         report.AppendLine($"centerPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, centeredCp)}");
         report.AppendLine($"rightPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, rightCp)}");
         report.AppendLine($"indentPiecePap={DescribePiecePap(textReader, pieceModifiers, wordDocReader, indentCp)}");
@@ -573,6 +599,37 @@ public class SprmParserTests
 
         if (lines.Count == 0)
             lines.Add("<no fkp entry for cp>");
+
+        return lines;
+    }
+
+    private static IReadOnlyList<string> GetPapFkpEntriesForCp(DocReader docReader, int cp)
+    {
+        var fkpParser = GetPrivateField(docReader, "_fkpParser")!;
+        var cache = (IDictionary)GetPrivateField(fkpParser, "_papFkpCache")!;
+        var lines = new List<string>();
+
+        foreach (DictionaryEntry entry in cache)
+        {
+            var fkp = entry.Value;
+            var entriesProp = fkp!.GetType().GetProperty("Entries")!;
+            var entries = (IEnumerable)entriesProp.GetValue(fkp)!;
+
+            foreach (var item in entries)
+            {
+                var startCp = (int)item!.GetType().GetProperty("StartCpOffset")!.GetValue(item)!;
+                var endCp = (int)item.GetType().GetProperty("EndCpOffset")!.GetValue(item)!;
+                if (cp < startCp || cp >= endCp)
+                    continue;
+
+                var rawGrpprl = (byte[])item.GetType().GetProperty("RawGrpprl")!.GetValue(item)!;
+                var pap = (PapBase)item.GetType().GetProperty("Properties")!.GetValue(item)!;
+                lines.Add($"pn={entry.Key} cp={startCp}..{endCp} grpprl={BitConverter.ToString(rawGrpprl).Replace('-', ' ')} pap={FormatPap(pap)}");
+            }
+        }
+
+        if (lines.Count == 0)
+            lines.Add("<no pap fkp entry for cp>");
 
         return lines;
     }

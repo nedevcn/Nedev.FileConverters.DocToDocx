@@ -42,8 +42,6 @@ public partial class DocumentWriter
     private Dictionary<int, List<int>> _commentEndsByParagraph = new();
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>
     private bool _suppressLeadingPageBreak;
-    /// <summary>When true, the next picture written in the body should use full-page dimensions (first-page background).</summary>
-    private bool _firstBodyPictureNotYetWritten;
 
     /// <summary>
     /// Creates a document writer for the target XML stream.
@@ -236,9 +234,6 @@ public partial class DocumentWriter
     private void WriteBody(DocumentModel document)
     {
         _writer.WriteStartElement("w", "body", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-
-        // First picture in body is often the first-page background; use full-page size for it
-        _firstBodyPictureNotYetWritten = true;
         
         // Precompute section boundaries: which paragraph index ends each section
         var sectionEndMap = BuildSectionEndMap(document);
@@ -633,6 +628,14 @@ public partial class DocumentWriter
         _writer.WriteStartElement("w", "cols", wNs);
         _writer.WriteAttributeString("w", "space", wNs, "720");
         _writer.WriteEndElement();
+
+        if (section?.DocGridLinePitch > 0)
+        {
+            _writer.WriteStartElement("w", "docGrid", wNs);
+            _writer.WriteAttributeString("w", "type", wNs, "lines");
+            _writer.WriteAttributeString("w", "linePitch", wNs, section.DocGridLinePitch.ToString());
+            _writer.WriteEndElement();
+        }
     }
 
     private void WriteHeaderFooterReference(string elementName, string type, int relationshipId)
@@ -734,6 +737,42 @@ public partial class DocumentWriter
         if (value == 0)
             return fallback;
         return Math.Clamp(value, min, max);
+    }
+
+    private static int ConvertCharacterIndentToTwips(int charIndent, int fontSizeHalfPoints)
+    {
+        if (charIndent == 0)
+            return 0;
+
+        int effectiveFontSizeHalfPoints = fontSizeHalfPoints > 0 ? fontSizeHalfPoints : 24;
+        return (int)Math.Round(Math.Abs(charIndent) * effectiveFontSizeHalfPoints * 10d / 100d, MidpointRounding.AwayFromZero);
+    }
+
+    private int ResolveParagraphIndentFontSizeHalfPoints(ParagraphModel paragraph)
+    {
+        foreach (var run in paragraph.Runs)
+        {
+            if (run.Properties == null)
+                continue;
+
+            int runFontSize = Math.Max(run.Properties.FontSize, run.Properties.FontSizeCs);
+            if (runFontSize > 0)
+                return runFontSize;
+        }
+
+        if (_document?.Styles?.Styles != null && paragraph.Properties?.StyleIndex > 0)
+        {
+            var style = _document.Styles.Styles.FirstOrDefault(s =>
+                s.Type == StyleType.Paragraph && s.StyleId == paragraph.Properties.StyleIndex);
+            if (style?.RunProperties != null)
+            {
+                int styleFontSize = Math.Max(style.RunProperties.FontSize, style.RunProperties.FontSizeCs);
+                if (styleFontSize > 0)
+                    return styleFontSize;
+            }
+        }
+
+        return 24;
     }
 
     /// <summary>
@@ -876,12 +915,16 @@ public partial class DocumentWriter
         // 8. spacing
         bool hasExplicitLineSpacing = props != null &&
             (props.LineSpacing != 240 || props.LineSpacingMultiple != 1);
-        if (props != null && (props.SpaceBefore > 0 || props.SpaceAfter > 0 || hasExplicitLineSpacing))
+        if (props != null && (props.SpaceBefore > 0 || props.SpaceBeforeLines > 0 || props.SpaceAfter > 0 || props.SpaceAfterLines > 0 || hasExplicitLineSpacing))
         {
             _writer.WriteStartElement("w", "spacing", wNs);
-            if (props.SpaceBefore > 0)
+            if (props.SpaceBeforeLines > 0)
+                _writer.WriteAttributeString("w", "beforeLines", wNs, props.SpaceBeforeLines.ToString());
+            else if (props.SpaceBefore > 0)
                 _writer.WriteAttributeString("w", "before", wNs, props.SpaceBefore.ToString());
-            if (props.SpaceAfter > 0)
+            if (props.SpaceAfterLines > 0)
+                _writer.WriteAttributeString("w", "afterLines", wNs, props.SpaceAfterLines.ToString());
+            else if (props.SpaceAfter > 0)
                 _writer.WriteAttributeString("w", "after", wNs, props.SpaceAfter.ToString());
             if (hasExplicitLineSpacing)
             {
@@ -915,22 +958,39 @@ public partial class DocumentWriter
         // 9. ind
         if (props != null && (props.IndentLeft != 0 || props.IndentLeftChars != 0 || props.IndentRight != 0 || props.IndentRightChars != 0 || props.IndentFirstLine != 0 || props.IndentFirstLineChars != 0))
         {
+            int fontSizeHalfPoints = ResolveParagraphIndentFontSizeHalfPoints(paragraph);
             _writer.WriteStartElement("w", "ind", wNs);
-            if (props.IndentLeft != 0)
-                _writer.WriteAttributeString("w", "left", wNs, props.IndentLeft.ToString());
+            int indentLeft = props.IndentLeft != 0
+                ? props.IndentLeft
+                : ConvertCharacterIndentToTwips(props.IndentLeftChars, fontSizeHalfPoints);
+            if (indentLeft != 0)
+                _writer.WriteAttributeString("w", "left", wNs, indentLeft.ToString());
             if (props.IndentLeftChars != 0)
                 _writer.WriteAttributeString("w", "leftChars", wNs, props.IndentLeftChars.ToString());
-            if (props.IndentRight != 0)
-                _writer.WriteAttributeString("w", "right", wNs, props.IndentRight.ToString());
+            int indentRight = props.IndentRight != 0
+                ? props.IndentRight
+                : ConvertCharacterIndentToTwips(props.IndentRightChars, fontSizeHalfPoints);
+            if (indentRight != 0)
+                _writer.WriteAttributeString("w", "right", wNs, indentRight.ToString());
             if (props.IndentRightChars != 0)
                 _writer.WriteAttributeString("w", "rightChars", wNs, props.IndentRightChars.ToString());
             
             if (props.IndentFirstLineChars > 0)
             {
+                int firstLine = props.IndentFirstLine > 0
+                    ? props.IndentFirstLine
+                    : ConvertCharacterIndentToTwips(props.IndentFirstLineChars, fontSizeHalfPoints);
+                if (firstLine > 0)
+                    _writer.WriteAttributeString("w", "firstLine", wNs, firstLine.ToString());
                 _writer.WriteAttributeString("w", "firstLineChars", wNs, props.IndentFirstLineChars.ToString());
             }
             else if (props.IndentFirstLineChars < 0)
             {
+                int hanging = props.IndentFirstLine < 0
+                    ? Math.Abs(props.IndentFirstLine)
+                    : ConvertCharacterIndentToTwips(props.IndentFirstLineChars, fontSizeHalfPoints);
+                if (hanging > 0)
+                    _writer.WriteAttributeString("w", "hanging", wNs, hanging.ToString());
                 _writer.WriteAttributeString("w", "hangingChars", wNs, Math.Abs(props.IndentFirstLineChars).ToString());
             }
             else if (props.IndentFirstLine > 0)
@@ -1230,6 +1290,8 @@ public partial class DocumentWriter
                         CharacterLength = run.CharacterLength,
                         IsPicture = run.IsPicture,
                         ImageIndex = run.ImageIndex,
+                        DisplayWidthTwips = run.DisplayWidthTwips,
+                        DisplayHeightTwips = run.DisplayHeightTwips,
                         FcPic = run.FcPic,
                         ImageRelationshipId = run.ImageRelationshipId,
                         IsOle = run.IsOle,
@@ -1564,9 +1626,12 @@ public partial class DocumentWriter
         // Calculate relationship ID using shared logic
         var ids = RelationshipsWriter.ComputeRelationshipIds(_document);
         
-        // Use actual image dimensions or sensible defaults
-        var widthEmu = image.WidthEMU > 0 ? image.WidthEMU : 5715000; // Default ~6 inches
-        var heightEmu = image.HeightEMU > 0 ? image.HeightEMU : 3810000; // Default ~4 inches
+        const int emuPerTwip = 635;
+        bool hasExplicitDisplaySize = run.DisplayWidthTwips > 0 || run.DisplayHeightTwips > 0;
+
+        // Prefer display dimensions from the source drawing occurrence when available.
+        var widthEmu = run.DisplayWidthTwips > 0 ? run.DisplayWidthTwips * emuPerTwip : (image.WidthEMU > 0 ? image.WidthEMU : 5715000);
+        var heightEmu = run.DisplayHeightTwips > 0 ? run.DisplayHeightTwips * emuPerTwip : (image.HeightEMU > 0 ? image.HeightEMU : 3810000);
 
         // Respect per-image scale factors when present (100000 = 100%)
         if (image.ScaleX > 0 && image.ScaleX != 100000)
@@ -1578,24 +1643,20 @@ public partial class DocumentWriter
             heightEmu = (int)(heightEmu * (image.ScaleY / 100000.0));
         }
 
-        // Full-page background: first picture in body always gets full page; else if size ≈ page use full page; else clamp to content
-        const int emuPerTwip = 635; // 1 twip = 1/1440 inch; 1 inch = 914400 EMUs
+        // Only preserve full-page sizing when the source image already looks page-sized.
         if (_document?.Properties != null)
         {
             var page = _document.Properties;
             int pageWidthEmu = page.PageWidth * emuPerTwip;
             int pageHeightEmu = page.PageHeight * emuPerTwip;
-            bool forceFirstFullPage = _firstBodyPictureNotYetWritten && pageWidthEmu > 0 && pageHeightEmu > 0;
-            bool looksFullPage = !forceFirstFullPage && (pageWidthEmu > 0 && pageHeightEmu > 0) &&
+            bool looksFullPage = (pageWidthEmu > 0 && pageHeightEmu > 0) &&
                 (widthEmu >= pageWidthEmu * 0.85 || heightEmu >= pageHeightEmu * 0.85);
-            if (forceFirstFullPage || looksFullPage)
+            if (looksFullPage)
             {
                 widthEmu = pageWidthEmu;
                 heightEmu = pageHeightEmu;
-                // clear flag on first picture regardless so it never repeats
-                _firstBodyPictureNotYetWritten = false;
             }
-            else
+            else if (!hasExplicitDisplaySize)
             {
                 var maxWidthTwips = page.PageWidth - page.MarginLeft - page.MarginRight;
                 if (maxWidthTwips > 0)

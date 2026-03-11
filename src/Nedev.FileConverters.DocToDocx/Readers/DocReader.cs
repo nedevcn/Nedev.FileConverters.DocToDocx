@@ -26,7 +26,6 @@ internal sealed class TextboxAnchorFieldInfo
 /// </summary>
 public class DocReader : IDisposable
 {
-    private const uint Sample1AccentBlueColorRef = 0xBD814F;
 
     // ensure legacy code pages are available on .NET 10+ so we can decode ANSI
     // text in East Asian documents (GBK, Shift-JIS, etc).  doing this once in
@@ -330,6 +329,7 @@ public class DocReader : IDisposable
         if (_officeArtReader != null)
         {
             OfficeArtMapper.AttachShapes(Document, _officeArtReader, _fspaAnchors);
+            ApplyPictureShapeDisplaySizes(Document);
         }
 
         // Step 6.6: Best-effort chart detection
@@ -896,22 +896,28 @@ public class DocReader : IDisposable
                 pap = foundPap;
             if (pap == null && papMap.Count > 0)
             {
-                // No PAP at paraStartCp (gap in PLC). Prefer preceding PAP; if it's Normal, try following (title may be in next segment).
-                for (int cp = paraStartCp - 1; cp >= Math.Max(0, startCp - 2000); cp--)
+                // When the paragraph start CP falls in a PLC gap, prefer PAP entries that
+                // still belong to the current paragraph before borrowing metadata from the
+                // preceding paragraph. This preserves paragraph-local direct formatting such
+                // as character-unit first-line indents without relying on text-specific fixes.
+                int paragraphEndCp = paraStartCp + paraText.Length;
+                for (int cp = paraStartCp + 1; cp <= paragraphEndCp; cp++)
                 {
-                    if (papMap.TryGetValue(cp, out var prevPap)) { pap = prevPap; break; }
-                }
-                if (pap != null && pap.StyleId == 0 && pap.Istd == 0)
-                {
-                    for (int cp = paraStartCp + 1; cp <= paraStartCp + 2000 && cp <= endCp; cp++)
+                    if (papMap.TryGetValue(cp, out var nextPap))
                     {
-                        if (papMap.TryGetValue(cp, out var nextPap) && (nextPap.StyleId != 0 || nextPap.Istd != 0))
-                        {
-                            pap = nextPap;
-                            break;
-                        }
+                        pap = nextPap;
+                        break;
                     }
                 }
+
+                if (pap == null)
+                {
+                    for (int cp = paraStartCp - 1; cp >= Math.Max(0, startCp - 2000); cp--)
+                    {
+                        if (papMap.TryGetValue(cp, out var prevPap)) { pap = prevPap; break; }
+                    }
+                }
+
                 if (pap == null)
                 {
                     var firstKey = papMap.Keys.Min();
@@ -936,6 +942,14 @@ public class DocReader : IDisposable
                 ListFormatId = pap?.ListFormatId ?? 0,
                 ListLevel = pap?.ListLevel ?? 0
             };
+
+            OverlayParagraphPropertiesFromRange(paragraph.Properties, papMap, paraStartCp, paraStartCp + paraText.Length);
+
+            var piecePap = _textReader?.GetPieceParagraphPropertiesAtCp(paraStartCp);
+            if (piecePap != null)
+            {
+                OverlayParagraphProperties(paragraph.Properties, piecePap);
+            }
 
             // Detect special paragraph types
             if (paraText.Contains('\x07') || pap?.InTable == true || (pap?.Itap ?? 0) > 0)
@@ -972,12 +986,94 @@ public class DocReader : IDisposable
 
             paragraph.Runs = ApplyBookmarkMarkers(paragraph.Runs, paraStartCp, paraStartCp + paraText.Length);
             ApplyParagraphStyleDefaults(paragraph);
-            ApplyTemplateSpecificFixes(paragraph);
 
             paragraphs.Add(paragraph);
         }
+
+        ApplyNarrativeFirstLineIndentHeuristics(paragraphs);
         
         return paragraphs;
+    }
+
+    private void ApplyNarrativeFirstLineIndentHeuristics(List<ParagraphModel> paragraphs)
+    {
+        if (paragraphs.Count < 2)
+            return;
+
+        int inferredIndentChars = InferNarrativeFirstLineChars(paragraphs);
+        if (inferredIndentChars <= 0)
+            return;
+
+        for (int index = 1; index < paragraphs.Count; index++)
+        {
+            var current = paragraphs[index];
+            var previous = paragraphs[index - 1];
+
+            if (!ShouldApplyNarrativeFirstLineIndent(previous, current))
+                continue;
+
+            current.Properties ??= new ParagraphProperties();
+            current.Properties.IndentFirstLineChars = inferredIndentChars;
+        }
+    }
+
+    private int InferNarrativeFirstLineChars(List<ParagraphModel> paragraphs)
+    {
+        var explicitIndents = paragraphs
+            .Where(paragraph => paragraph.Properties?.IndentFirstLineChars > 0)
+            .Select(paragraph => paragraph.Properties!.IndentFirstLineChars)
+            .GroupBy(value => value)
+            .OrderByDescending(group => group.Count())
+            .ThenByDescending(group => group.Key)
+            .Select(group => group.Key)
+            .ToList();
+
+        if (explicitIndents.Count > 0)
+            return explicitIndents[0];
+
+        return 200;
+    }
+
+    private bool ShouldApplyNarrativeFirstLineIndent(ParagraphModel previous, ParagraphModel current)
+    {
+        if (!IsHeadingOrTitleParagraph(previous))
+            return false;
+
+        if (current.Type != ParagraphType.Normal || current.Properties == null)
+            return false;
+
+        if (current.Properties.ListFormatId > 0 || current.ListFormatId > 0)
+            return false;
+
+        if (current.Properties.IndentLeft != 0 || current.Properties.IndentLeftChars != 0 ||
+            current.Properties.IndentRight != 0 || current.Properties.IndentRightChars != 0 ||
+            current.Properties.IndentFirstLine != 0 || current.Properties.IndentFirstLineChars != 0)
+            return false;
+
+        var text = current.Text?.Trim() ?? string.Empty;
+        if (text.Length < 60)
+            return false;
+
+        int wordCount = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        return wordCount >= 8;
+    }
+
+    private bool IsHeadingOrTitleParagraph(ParagraphModel paragraph)
+    {
+        var styleIndex = paragraph.Properties?.StyleIndex ?? 0;
+        if (styleIndex == StyleIds.TITLE)
+            return true;
+
+        if (styleIndex >= StyleIds.HEADING_1 && styleIndex <= StyleIds.HEADING_9)
+            return true;
+
+        var style = Document.Styles?.Styles?.FirstOrDefault(candidate =>
+            candidate.Type == StyleType.Paragraph && candidate.StyleId == styleIndex);
+        if (style?.Name == null)
+            return false;
+
+        return style.Name.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(style.Name, "Title", StringComparison.OrdinalIgnoreCase);
     }
 
     private List<RunModel> ApplyBookmarkMarkers(List<RunModel> runs, int paragraphStartCp, int paragraphEndCp)
@@ -1122,6 +1218,8 @@ public class DocReader : IDisposable
             CharacterLength = characterLength,
             IsPicture = run.IsPicture,
             ImageIndex = run.ImageIndex,
+            DisplayWidthTwips = run.DisplayWidthTwips,
+            DisplayHeightTwips = run.DisplayHeightTwips,
             FcPic = run.FcPic,
             ImageRelationshipId = run.ImageRelationshipId,
             IsOle = run.IsOle,
@@ -1405,7 +1503,8 @@ public class DocReader : IDisposable
         if (ReferenceEquals(a, b)) return true;
         if (a == null || b == null) return false;
 
-         return a.IsBold == b.IsBold &&
+         return a.StyleId == b.StyleId &&
+             a.IsBold == b.IsBold &&
              a.IsBoldCs == b.IsBoldCs &&
              a.IsItalic == b.IsItalic &&
              a.IsItalicCs == b.IsItalicCs &&
@@ -1452,6 +1551,7 @@ public class DocReader : IDisposable
         return new ChpBase
         {
             FontIndex = source.FontIndex,
+            StyleId = source.StyleId,
             FontSize = source.FontSize,
             FontSizeCs = source.FontSizeCs,
             IsBold = source.IsBold,
@@ -1508,6 +1608,7 @@ public class DocReader : IDisposable
     private static void OverlayChpBase(ChpBase target, ChpBase overlay)
     {
         if (overlay.FontIndex != -1) target.FontIndex = overlay.FontIndex;
+        if (overlay.StyleId != 0) target.StyleId = overlay.StyleId;
         if (overlay.FontSize != 24) target.FontSize = overlay.FontSize;
         if (overlay.FontSizeCs != 24) target.FontSizeCs = overlay.FontSizeCs;
         target.IsBold |= overlay.IsBold;
@@ -1616,6 +1717,15 @@ public class DocReader : IDisposable
         if (directChp == null)
             return runProps;
 
+        if (directChp.StyleId != 0)
+        {
+            var characterStyleProps = GetRunPropertiesFromCharacterStyle(directChp.StyleId);
+            if (characterStyleProps != null)
+            {
+                runProps = MergeRunProperties(runProps, characterStyleProps);
+            }
+        }
+
         var directProps = _fkpParser!.ConvertToRunProperties(directChp, Document.Styles);
         runProps = MergeRunProperties(runProps, directProps);
         return runProps;
@@ -1661,6 +1771,19 @@ public class DocReader : IDisposable
 
         return styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.IsPrimary && s.RunProperties != null)
             ?? styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.RunProperties != null);
+    }
+
+    private RunProperties? GetRunPropertiesFromCharacterStyle(ushort styleId)
+    {
+        var styles = Document.Styles;
+        if (styles?.Styles == null || styles.Styles.Count == 0)
+            return null;
+
+        var style = styles.Styles.FirstOrDefault(s => s.Type == StyleType.Character && s.StyleId == styleId);
+        if (style?.RunProperties == null)
+            return null;
+
+        return CloneRunProperties(style.RunProperties);
     }
 
     private static RunProperties MergeRunProperties(RunProperties baseProps, RunProperties directProps)
@@ -1828,8 +1951,7 @@ public class DocReader : IDisposable
         if (styles == null || styles.Styles == null || styles.Styles.Count == 0)
             return;
 
-        var style = styles.Styles
-            .FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == paragraphProps.StyleIndex);
+        var style = ResolveParagraphStyle(styles, paragraphProps.StyleIndex);
 
         if (style == null)
             return;
@@ -1866,8 +1988,14 @@ public class DocReader : IDisposable
             if (paragraphProps.SpaceBefore == 0 && sp.SpaceBefore != 0)
                 paragraphProps.SpaceBefore = sp.SpaceBefore;
 
+            if (paragraphProps.SpaceBefore == 0 && paragraphProps.SpaceBeforeLines == 0 && sp.SpaceBeforeLines != 0)
+                paragraphProps.SpaceBeforeLines = sp.SpaceBeforeLines;
+
             if (paragraphProps.SpaceAfter == 0 && sp.SpaceAfter != 0)
                 paragraphProps.SpaceAfter = sp.SpaceAfter;
+
+            if (paragraphProps.SpaceAfter == 0 && paragraphProps.SpaceAfterLines == 0 && sp.SpaceAfterLines != 0)
+                paragraphProps.SpaceAfterLines = sp.SpaceAfterLines;
 
             if (paragraphProps.LineSpacing == 240 && sp.LineSpacing != 240)
             {
@@ -1919,119 +2047,63 @@ public class DocReader : IDisposable
             // Highlight
             if (rp.HighlightColor == 0 && sr.HighlightColor != 0)
                 rp.HighlightColor = sr.HighlightColor;
+
+            ApplyEastAsiaDefaultFont(run, rp);
         }
     }
 
-    /// <summary>
-    /// Applies document/template‑specific fallbacks that are hard to
-    /// infer purely from low‑level binary structures.
-    /// </summary>
-    private void ApplyTemplateSpecificFixes(ParagraphModel paragraph)
+    private void ApplyEastAsiaDefaultFont(RunModel run, RunProperties properties)
     {
-        if (paragraph == null) return;
-
-        if (paragraph.Properties != null &&
-            paragraph.Properties.IndentLeft == 0 &&
-            paragraph.Properties.IndentLeftChars == 0 &&
-            paragraph.Properties.IndentRight == 0 &&
-            paragraph.Properties.IndentRightChars == 0 &&
-            paragraph.Properties.IndentFirstLine == 0 &&
-            paragraph.Properties.IndentFirstLineChars == 0 &&
-            paragraph.Text.Contains("Here, we demonstrate various types of inline text formatting", StringComparison.Ordinal))
-        {
-            paragraph.Properties.IndentFirstLineChars = 206;
-        }
-
-        if (paragraph.Text.Contains("A paragraph with styled text:", StringComparison.Ordinal))
-        {
-            ApplyStyledTextFormattingFallback(paragraph);
-        }
-
-        if (IsSample1PrimaryHeading(paragraph.Text))
-        {
-            ApplySample1PrimaryHeadingFallback(paragraph);
-        }
-
-        if (string.IsNullOrEmpty(paragraph.Text) || !paragraph.Text.Contains("绿色等级评价报告", StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(properties.FontName))
             return;
 
-        paragraph.Properties ??= new ParagraphProperties();
-        paragraph.Properties.Alignment = ParagraphAlignment.Center;
-
-        // When PAP gave Normal but CHP has larger font (direct formatting), take color/font from a title-like style if present
-        var styles = Document.Styles?.Styles;
-        if (styles == null || paragraph.Runs == null) return;
-        var titleLike = styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId != 0 &&
-            (s.Name?.Contains("Title", StringComparison.OrdinalIgnoreCase) == true ||
-             s.Name?.Contains("标题", StringComparison.OrdinalIgnoreCase) == true ||
-             s.Name?.Contains("Heading", StringComparison.OrdinalIgnoreCase) == true) &&
-            s.RunProperties != null && (s.RunProperties.Color != 0 || s.RunProperties.HasRgbColor || s.RunProperties.FontSize > 24));
-        if (titleLike?.RunProperties == null) return;
-        var tr = titleLike.RunProperties;
-        foreach (var run in paragraph.Runs)
-        {
-            run.Properties ??= new RunProperties();
-            if (run.Properties.Color == 0 && !run.Properties.HasRgbColor && tr.Color != 0) run.Properties.Color = tr.Color;
-            if (run.Properties.Color == 0 && !run.Properties.HasRgbColor && tr.HasRgbColor) { run.Properties.RgbColor = tr.RgbColor; run.Properties.HasRgbColor = true; }
-            if (run.Properties.FontSize <= 24 && tr.FontSize > 24) run.Properties.FontSize = tr.FontSize;
-            if (string.IsNullOrEmpty(run.Properties.FontName) && !string.IsNullOrEmpty(tr.FontName)) run.Properties.FontName = tr.FontName;
-        }
-    }
-
-    private static void ApplyStyledTextFormattingFallback(ParagraphModel paragraph)
-    {
-        var subtle = paragraph.Runs.FirstOrDefault(run => run.Text.Contains("subtle emphasis", StringComparison.Ordinal));
-        var strong = paragraph.Runs.FirstOrDefault(run => run.Text.Contains("strong text", StringComparison.Ordinal));
-        var intense = paragraph.Runs.FirstOrDefault(run => run.Text.Contains("intense emphasis", StringComparison.Ordinal));
-
-        if (subtle == null || strong == null || intense == null)
+        if (!ContainsEastAsianText(run.Text) && string.IsNullOrEmpty(properties.LanguageAsia) && properties.Language != 0x0804)
             return;
 
-        ApplyCharacterStyleFallback(subtle, italic: true, rgbColor: Sample1AccentBlueColorRef);
-        ApplyCharacterStyleFallback(strong, bold: true);
-        ApplyCharacterStyleFallback(intense, bold: true, italic: true, rgbColor: Sample1AccentBlueColorRef);
+        properties.FontName = Document.Theme.MinorEastAsiaFont
+            ?? Document.Theme.MajorEastAsiaFont
+            ?? "SimSun";
     }
 
-    private static bool IsSample1PrimaryHeading(string? paragraphText)
+    private static bool ContainsEastAsianText(string? text)
     {
-        return string.Equals(paragraphText, "Text Formatting", StringComparison.Ordinal) ||
-               string.Equals(paragraphText, "Tables", StringComparison.Ordinal) ||
-               string.Equals(paragraphText, "Images", StringComparison.Ordinal) ||
-               string.Equals(paragraphText, "Lists", StringComparison.Ordinal);
-    }
+        if (string.IsNullOrEmpty(text))
+            return false;
 
-    private static void ApplySample1PrimaryHeadingFallback(ParagraphModel paragraph)
-    {
-        paragraph.Properties ??= new ParagraphProperties();
-        paragraph.Properties.Alignment = ParagraphAlignment.Center;
-
-        foreach (var run in paragraph.Runs)
+        foreach (var c in text)
         {
-            ApplyCharacterStyleFallback(run, bold: true, rgbColor: Sample1AccentBlueColorRef);
-            if (run.Properties != null && run.Properties.FontSize < 32)
+            if ((c >= '\u4E00' && c <= '\u9FFF') ||
+                (c >= '\u3400' && c <= '\u4DBF') ||
+                (c >= '\u3000' && c <= '\u303F') ||
+                (c >= '\u3040' && c <= '\u30FF') ||
+                (c >= '\uAC00' && c <= '\uD7AF'))
             {
-                run.Properties.FontSize = 32;
-                run.Properties.FontSizeCs = 32;
+                return true;
             }
         }
+
+        return false;
     }
 
-    private static void ApplyCharacterStyleFallback(RunModel run, bool bold = false, bool italic = false, uint? rgbColor = null)
+    private static StyleDefinition? ResolveParagraphStyle(StyleSheet styles, int styleIndex)
     {
-        run.Properties ??= new RunProperties();
-        run.Properties.FontSize = 24;
-        run.Properties.FontSizeCs = 24;
-        run.Properties.IsBold |= bold;
-        run.Properties.IsItalic |= italic;
-        run.Properties.IsBoldCs |= bold;
-        run.Properties.IsItalicCs |= italic;
-
-        if (rgbColor.HasValue)
+        if (styleIndex == 0)
         {
-            run.Properties.Color = 0;
-            run.Properties.RgbColor = rgbColor.Value;
-            run.Properties.HasRgbColor = true;
+            return styles.Styles
+                       .Where(s =>
+                           s.Type == StyleType.Paragraph &&
+                           string.Equals(s.Name, "Normal", StringComparison.OrdinalIgnoreCase))
+                       .OrderBy(s => s.StyleId == 0 ? 1 : 0)
+                       .FirstOrDefault()
+                   ?? styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == StyleIds.NORMAL)
+                   ?? styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == 0);
         }
+
+        var exactMatch = styles.Styles.FirstOrDefault(s => s.Type == StyleType.Paragraph && s.StyleId == styleIndex);
+        if (exactMatch != null)
+            return exactMatch;
+
+        return null;
     }
 
     /// <summary>
@@ -2115,6 +2187,146 @@ public class DocReader : IDisposable
             Logger.Warning("Failed to extract VBA project storage.", ex);
         }
     }
+    private static void OverlayParagraphProperties(ParagraphProperties target, PapBase overlay)
+    {
+        if (overlay.StyleId != 0)
+            target.StyleIndex = overlay.StyleId;
+        else if (target.StyleIndex == 0 && overlay.Istd != 0)
+            target.StyleIndex = overlay.Istd;
+
+        if (overlay.Justification != 0)
+            target.Alignment = (ParagraphAlignment)overlay.Justification;
+
+        if (overlay.IndentLeft != 0)
+            target.IndentLeft = overlay.IndentLeft;
+        if (overlay.IndentLeftChars != 0)
+            target.IndentLeftChars = overlay.IndentLeftChars;
+        if (overlay.IndentRight != 0)
+            target.IndentRight = overlay.IndentRight;
+        if (overlay.IndentRightChars != 0)
+            target.IndentRightChars = overlay.IndentRightChars;
+        if (overlay.IndentFirstLine != 0)
+            target.IndentFirstLine = overlay.IndentFirstLine;
+        if (overlay.IndentFirstLineChars != 0)
+            target.IndentFirstLineChars = overlay.IndentFirstLineChars;
+        if (overlay.SpaceBefore != 0)
+        {
+            target.SpaceBefore = overlay.SpaceBefore;
+            target.SpaceBeforeLines = 0;
+        }
+        if (overlay.SpaceBeforeLines != 0)
+        {
+            target.SpaceBeforeLines = overlay.SpaceBeforeLines;
+            target.SpaceBefore = 0;
+        }
+        if (overlay.SpaceAfter != 0)
+        {
+            target.SpaceAfter = overlay.SpaceAfter;
+            target.SpaceAfterLines = 0;
+        }
+        if (overlay.SpaceAfterLines != 0)
+        {
+            target.SpaceAfterLines = overlay.SpaceAfterLines;
+            target.SpaceAfter = 0;
+        }
+        if (overlay.LineSpacing != 240 || overlay.LineSpacingMultiple != 1)
+        {
+            target.LineSpacing = overlay.LineSpacing;
+            target.LineSpacingMultiple = overlay.LineSpacingMultiple;
+        }
+        if (overlay.KeepWithNext)
+            target.KeepWithNext = true;
+        if (overlay.KeepTogether)
+            target.KeepTogether = true;
+        if (overlay.PageBreakBefore)
+            target.PageBreakBefore = true;
+        if (overlay.ListFormatId != 0)
+            target.ListFormatId = overlay.ListFormatId;
+        if (overlay.ListLevel != 0)
+            target.ListLevel = overlay.ListLevel;
+        if (overlay.OutlineLevel != 9)
+            target.OutlineLevel = overlay.OutlineLevel;
+        if (overlay.Shading != null)
+            target.Shading = overlay.Shading;
+    }
+
+    private static void OverlayParagraphPropertiesFromRange(ParagraphProperties target, Dictionary<int, PapBase> papMap, int paragraphStartCp, int paragraphEndCp)
+    {
+        if (papMap.Count == 0)
+            return;
+
+        foreach (var entry in papMap
+            .Where(kvp => kvp.Key >= paragraphStartCp && kvp.Key <= paragraphEndCp)
+            .OrderBy(kvp => kvp.Key))
+        {
+            OverlayParagraphProperties(target, entry.Value);
+        }
+    }
+
+    private static void ApplyPictureShapeDisplaySizes(DocumentModel document)
+    {
+        if (document.Shapes == null || document.Shapes.Count == 0)
+            return;
+
+        var shapesByImageIndex = document.Shapes
+            .Where(shape =>
+                shape.Type == ShapeType.Picture &&
+                shape.ImageIndex is not null &&
+                shape.Anchor != null &&
+                shape.Anchor.Width > 0 &&
+                shape.Anchor.Height > 0)
+            .GroupBy(shape => shape.ImageIndex!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => new Queue<ShapeModel>(group
+                    .OrderBy(shape => shape.Anchor!.ParagraphIndex >= 0 ? shape.Anchor.ParagraphIndex : shape.ParagraphIndexHint)
+                    .ThenBy(shape => shape.Anchor!.ZOrder)
+                    .ThenBy(shape => shape.Id)));
+
+        if (shapesByImageIndex.Count == 0)
+            return;
+
+        foreach (var run in EnumeratePictureRuns(document))
+        {
+            if (run.ImageIndex < 0)
+                continue;
+
+            if (!shapesByImageIndex.TryGetValue(run.ImageIndex, out var shapes) || shapes.Count == 0)
+                continue;
+
+            var shape = shapes.Dequeue();
+            run.DisplayWidthTwips = shape.Anchor!.Width;
+            run.DisplayHeightTwips = shape.Anchor.Height;
+        }
+    }
+
+    private static IEnumerable<RunModel> EnumeratePictureRuns(DocumentModel document)
+    {
+        foreach (var para in document.Paragraphs)
+            foreach (var run in para.Runs)
+                if (run.IsPicture) yield return run;
+        foreach (var table in document.Tables)
+            foreach (var row in table.Rows)
+                foreach (var cell in row.Cells)
+                    foreach (var para in cell.Paragraphs)
+                        foreach (var run in para.Runs)
+                            if (run.IsPicture) yield return run;
+        foreach (var note in document.Footnotes)
+            foreach (var para in note.Paragraphs)
+                foreach (var run in para.Runs)
+                    if (run.IsPicture) yield return run;
+        foreach (var note in document.Endnotes)
+            foreach (var para in note.Paragraphs)
+                foreach (var run in para.Runs)
+                    if (run.IsPicture) yield return run;
+        foreach (var textbox in document.Textboxes)
+        {
+            if (textbox.Paragraphs == null) continue;
+            foreach (var para in textbox.Paragraphs)
+                foreach (var run in para.Runs)
+                    if (run.IsPicture) yield return run;
+        }
+    }
 
     public void Dispose()
     {
@@ -2131,8 +2343,6 @@ public class DocReader : IDisposable
         _cfb?.Dispose();
     }
 }
-
-
 
 /// <summary>
 /// Image reader — extracts images from Word documents.
@@ -2187,6 +2397,9 @@ public class ImageReader
 
             // 4. Ensure every picture run has a valid ImageIndex (assign 0,1,2... in document order)
             AssignPictureRunIndices(document);
+
+            // 5. PICF carries per-occurrence display size for repeated inline pictures.
+            ApplyPictureRunDisplaySizes(document, buffer);
         }
         catch (Exception ex)
         {
@@ -2640,6 +2853,66 @@ public class ImageReader
         }
     }
 
+    private static void ApplyPictureRunDisplaySizes(DocumentModel document, byte[] buffer)
+    {
+        int maxContentWidthTwips = 0;
+        if (document.Properties != null)
+        {
+            maxContentWidthTwips = Math.Max(0, document.Properties.PageWidth - document.Properties.MarginLeft - document.Properties.MarginRight);
+        }
+
+        foreach (var run in EnumeratePictureRuns(document))
+        {
+            run.DisplayWidthTwips = 0;
+            run.DisplayHeightTwips = 0;
+
+            if (!run.IsPicture || !TryFcPicToBufferOffset(run.FcPic, buffer.Length, out int offset))
+                continue;
+
+            if (!TryReadPicfDisplaySize(buffer, offset, maxContentWidthTwips, out int widthTwips, out int heightTwips))
+                continue;
+
+            run.DisplayWidthTwips = widthTwips;
+            run.DisplayHeightTwips = heightTwips;
+        }
+    }
+
+    private static bool TryReadPicfDisplaySize(byte[] buffer, int offset, int maxContentWidthTwips, out int widthTwips, out int heightTwips)
+    {
+        widthTwips = 0;
+        heightTwips = 0;
+
+        if (offset < 0 || offset + 36 > buffer.Length)
+            return false;
+
+        ushort cbHeader = BitConverter.ToUInt16(buffer, offset + 4);
+        if (cbHeader < 36 || offset + cbHeader > buffer.Length)
+            return false;
+
+        int dxaGoal = BitConverter.ToUInt16(buffer, offset + 28);
+        int dyaGoal = BitConverter.ToUInt16(buffer, offset + 30);
+        int mx = BitConverter.ToUInt16(buffer, offset + 32);
+        int my = BitConverter.ToUInt16(buffer, offset + 34);
+
+        if (dxaGoal <= 0 || dyaGoal <= 0)
+            return false;
+
+        double width = dxaGoal;
+        double height = dyaGoal;
+
+        if (mx > 0 && mx != 1000)
+            width = width * mx / 1000d;
+        if (my > 0 && my != 1000)
+            height = height * my / 1000d;
+
+        if (maxContentWidthTwips > 0 && width > maxContentWidthTwips)
+            width = maxContentWidthTwips;
+
+        widthTwips = (int)Math.Round(width, MidpointRounding.AwayFromZero);
+        heightTwips = (int)Math.Round(height, MidpointRounding.AwayFromZero);
+        return widthTwips > 0 && heightTwips > 0;
+    }
+
     /// <summary>Scans WordDocument, Table, and ObjectPool streams for embedded images.</summary>
     private void ScanAdditionalStreamsForImages(List<ImageModel> images)
     {
@@ -2944,8 +3217,8 @@ public class ImageReader
                 case ImageType.Png:
                     if (data.Length >= 24)
                     {
-                        var width = (int)BitConverter.ToUInt32(data, 16);
-                        var height = (int)BitConverter.ToUInt32(data, 20);
+                        var width = (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
+                        var height = (data[20] << 24) | (data[21] << 16) | (data[22] << 8) | data[23];
                         return (width, height);
                     }
                     break;

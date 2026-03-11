@@ -51,15 +51,24 @@ public class SectionReader
         for (int i = 0; i < n; i++)
         {
             // Read SED (12 bytes)
-            // fcSepx (4 bytes): offset in WordDocument stream to the SEPX
+            // SED layout is 12 bytes. The SEPX offset is not stored at byte 0;
+            // there is a 2-byte field ahead of it, so reading the first four
+            // bytes as fcSepx misaligns the value and produces bogus high-bit
+            // offsets like 0x14000036.
+            _tableReader.ReadUInt16();
             uint fcSepx = _tableReader.ReadUInt32();
-            _tableReader.BaseStream.Seek(8, SeekOrigin.Current); // Reserved
+            _tableReader.BaseStream.Seek(6, SeekOrigin.Current);
 
             var section = new SectionInfo
             {
                 StartCp = cps[i],
                 EndCp = cps[i + 1]
             };
+
+            // Seed each section with the SPRM parser's default SEP values so
+            // invalid or missing SEPX records still fall back to Word-like page
+            // geometry instead of the broader DocumentModel defaults.
+            MapSepToSectionInfo(new SepBase(), section);
 
             if (fcSepx != 0xFFFFFFFF)
             {
@@ -117,6 +126,7 @@ public class SectionReader
         info.Gutter = sep.Gutter;
         info.ColumnCount = sep.ColumnCount;
         info.ColumnSpacing = sep.ColumnSpacing;
+        info.DocGridLinePitch = sep.DocGridLinePitch;
         info.BreakCode = sep.BreakCode;
         info.VerticalAlignment = sep.VerticalAlignment;
         

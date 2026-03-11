@@ -1541,9 +1541,37 @@ namespace Nedev.FileConverters.DocToDocx.Tests
 
                 var centeredParagraph = FindParagraphContainingText(xDocument, w, "居中");
                 Assert.Equal("center", centeredParagraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")?.Value);
+                var centeredFonts = centeredParagraph
+                    .Descendants(w + "rFonts")
+                    .Select(fonts => new
+                    {
+                        Ascii = fonts.Attribute(w + "ascii")?.Value,
+                        EastAsia = fonts.Attribute(w + "eastAsia")?.Value,
+                        HAnsi = fonts.Attribute(w + "hAnsi")?.Value,
+                        Cs = fonts.Attribute(w + "cs")?.Value
+                    })
+                    .ToList();
+                Assert.Contains(centeredFonts, fonts =>
+                    string.Equals(fonts.EastAsia, "SimSun", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fonts.Ascii, "SimSun", StringComparison.OrdinalIgnoreCase));
 
                 var rightAlignedParagraph = FindParagraphContainingText(xDocument, w, "右对齐");
                 Assert.Equal("right", rightAlignedParagraph.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val")?.Value);
+                var rightSpacing = rightAlignedParagraph.Element(w + "pPr")?.Element(w + "spacing");
+                Assert.NotNull(rightSpacing);
+                Assert.Equal("278", rightSpacing!.Attribute(w + "line")?.Value);
+                Assert.Equal("auto", rightSpacing.Attribute(w + "lineRule")?.Value);
+
+                var rightAfter = rightSpacing.Attribute(w + "after")?.Value;
+                var rightAfterLines = rightSpacing.Attribute(w + "afterLines")?.Value;
+                var preservesExpectedAfterSpacing = string.Equals(rightAfterLines, "51", StringComparison.Ordinal) ||
+                    string.Equals(rightAfter, "160", StringComparison.Ordinal);
+                Assert.True(preservesExpectedAfterSpacing,
+                    $"Expected the sample right-aligned paragraph to preserve about 0.51 lines of spacing below, but got after='{rightAfter ?? "<null>"}', afterLines='{rightAfterLines ?? "<null>"}'.");
+
+                var docGrid = xDocument.Descendants(w + "docGrid").FirstOrDefault();
+                Assert.NotNull(docGrid);
+                Assert.Equal("312", docGrid!.Attribute(w + "linePitch")?.Value);
 
                 var indentParagraph = FindParagraphContainingText(xDocument, w, "Indent");
                 Assert.NotNull(indentParagraph.Element(w + "pPr")?.Element(w + "ind"));
@@ -1615,15 +1643,26 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             var centeredParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("居中", StringComparison.Ordinal));
             Assert.NotNull(centeredParagraph);
             Assert.Equal(ParagraphAlignment.Center, centeredParagraph!.Properties?.Alignment);
+            var centeredRunFonts = centeredParagraph.Runs
+                .Select(run => run.Properties?.FontName)
+                .Where(fontName => !string.IsNullOrWhiteSpace(fontName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            Assert.Contains("SimSun", centeredRunFonts, StringComparer.OrdinalIgnoreCase);
 
             var rightAlignedParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("右对齐", StringComparison.Ordinal));
             Assert.NotNull(rightAlignedParagraph);
             Assert.Equal(ParagraphAlignment.Right, rightAlignedParagraph!.Properties?.Alignment);
+            Assert.Equal(278, rightAlignedParagraph.Properties?.LineSpacing);
+            Assert.Equal(1, rightAlignedParagraph.Properties?.LineSpacingMultiple);
+            Assert.True(
+                rightAlignedParagraph.Properties?.SpaceAfterLines == 51 || rightAlignedParagraph.Properties?.SpaceAfter == 160,
+                $"Expected the right-aligned sample paragraph to preserve about 0.51 lines of spacing below, but got after={rightAlignedParagraph.Properties?.SpaceAfter}, afterLines={rightAlignedParagraph.Properties?.SpaceAfterLines}.");
+            Assert.Contains(document.Properties.Sections, section => section.DocGridLinePitch == 312);
 
             var indentParagraph = document.Paragraphs.FirstOrDefault(p => string.Equals(p.Text, "Indent", StringComparison.Ordinal));
             Assert.NotNull(indentParagraph);
             Assert.True(indentParagraph!.Properties?.IndentLeft > 0, "Expected sample indent paragraph to retain a positive left indent.");
-
             var lineSpacingParagraph = document.Paragraphs.FirstOrDefault(p => p.Text.Contains("行间距", StringComparison.Ordinal));
             Assert.NotNull(lineSpacingParagraph);
             Assert.True(
@@ -1639,6 +1678,27 @@ namespace Nedev.FileConverters.DocToDocx.Tests
             Assert.Equal(4, listParagraphs.Count);
             Assert.All(listParagraphs, paragraph => Assert.True(paragraph.ListFormatId > 0, $"Expected list paragraph '{paragraph.Text}' to retain numbering metadata."));
             Assert.Contains(listParagraphs, paragraph => paragraph.ListLevel > 0);
+        }
+
+        [Fact]
+        public void SampleTextDoc_NormalStyle_PreservesParagraphSpacingDefaults()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "text.doc");
+
+            using var docReader = new DocReader(inputPath);
+            docReader.Load();
+
+            var normalStyle = docReader.Document.Styles.Styles
+                .Where(s => s.Type == StyleType.Paragraph)
+                .FirstOrDefault(s => string.Equals(s.Name, "Normal", StringComparison.OrdinalIgnoreCase) || s.StyleId == 0 || s.StyleId == StyleIds.NORMAL);
+
+            var details = $"styles={string.Join(" | ", docReader.Document.Styles.Styles.Where(s => s.Type == StyleType.Paragraph).Select(s => $"id={s.StyleId},name={s.Name},line={s.ParagraphProperties?.LineSpacing},mult={s.ParagraphProperties?.LineSpacingMultiple},after={s.ParagraphProperties?.SpaceAfter},afterLines={s.ParagraphProperties?.SpaceAfterLines}"))}";
+
+            Assert.NotNull(normalStyle);
+            Assert.NotNull(normalStyle!.ParagraphProperties);
+            Assert.True(normalStyle.ParagraphProperties!.LineSpacing == 278, details);
+            Assert.True(normalStyle.ParagraphProperties.SpaceAfterLines == 51 || normalStyle.ParagraphProperties.SpaceAfter == 160, details);
         }
 
         [Fact]
@@ -1772,6 +1832,11 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
                 var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
                 var relsXml = new StreamReader(archive.GetEntry("word/_rels/document.xml.rels").Open()).ReadToEnd();
+                var xDocument = XDocument.Parse(documentXml);
+                XNamespace wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+                var extents = xDocument.Descendants(wp + "extent").ToList();
+                var firstExtent = extents.FirstOrDefault();
+                var secondExtent = extents.Skip(1).FirstOrDefault();
 
                 Assert.Contains("原始", documentXml);
                 Assert.Contains("缩放", documentXml);
@@ -1780,12 +1845,40 @@ namespace Nedev.FileConverters.DocToDocx.Tests
                 Assert.Equal(3, Regex.Matches(documentXml, "<a:blip r:embed=").Count);
                 Assert.Single(archive.Entries.Where(entry => entry.FullName.StartsWith("word/media/", StringComparison.OrdinalIgnoreCase)));
                 Assert.Single(Regex.Matches(relsXml, "relationships/image"));
+                Assert.Equal(3, extents.Count);
+                Assert.NotNull(firstExtent);
+                Assert.NotNull(secondExtent);
+                var firstWidthCm = Math.Round((double)firstExtent!.Attribute("cx")! / 360000d, 2);
+                var firstHeightCm = Math.Round((double)firstExtent.Attribute("cy")! / 360000d, 2);
+                var secondWidthCm = Math.Round((double)secondExtent!.Attribute("cx")! / 360000d, 2);
+                var secondHeightCm = Math.Round((double)secondExtent.Attribute("cy")! / 360000d, 2);
+                Assert.Equal(4.07, firstWidthCm);
+                Assert.Equal(0.82, firstHeightCm);
+                Assert.Equal(15.92, secondWidthCm);
+                Assert.Equal(3.38, secondHeightCm);
             }
             finally
             {
                 if (File.Exists(outputPath))
                     File.Delete(outputPath);
             }
+        }
+
+        [Fact]
+        public void SampleImageDoc_Reader_PreservesPngPixelDimensions()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "image.doc");
+
+            using var stream = File.OpenRead(inputPath);
+            using var reader = new DocReader(stream, password: null);
+            reader.Load();
+
+            var firstImage = reader.Document.Images.FirstOrDefault();
+
+            Assert.NotNull(firstImage);
+            Assert.Equal(154, firstImage!.Width);
+            Assert.Equal(31, firstImage.Height);
         }
 
         [Fact]
