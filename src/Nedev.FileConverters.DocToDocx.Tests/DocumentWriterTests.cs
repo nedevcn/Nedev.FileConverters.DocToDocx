@@ -1844,6 +1844,63 @@ namespace Nedev.FileConverters.DocToDocx.Tests
         }
 
         [Fact]
+        public void SampleTableDoc_LoadDocument_PreservesFourthTopLevelTableFixedRowHeightColumns()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "table.doc");
+
+            var document = DocToDocxConverter.LoadDocument(inputPath);
+            var topLevelTables = document.Tables
+                .Where(table => table.ParentTableIndex == null)
+                .OrderBy(table => table.StartParagraphIndex)
+                .ToList();
+            var fixedRowHeightTable = topLevelTables.Skip(3).First();
+
+            Assert.Equal(2, fixedRowHeightTable.RowCount);
+            Assert.Equal(3, fixedRowHeightTable.ColumnCount);
+            Assert.All(fixedRowHeightTable.Rows, row => Assert.Equal(3, row.Cells.Count));
+            Assert.Equal("Afdasfdsfdsfvscer测试自动换行", fixedRowHeightTable.Rows[0].Cells[0].Paragraphs[0].Text);
+            Assert.Equal("固定行高", fixedRowHeightTable.Rows[1].Cells[0].Paragraphs[0].Text);
+            Assert.All(fixedRowHeightTable.Rows.SelectMany(row => row.Cells.Skip(1)), cell =>
+                Assert.True(string.IsNullOrWhiteSpace(cell.Paragraphs[0].Text)));
+        }
+
+        [Fact]
+        public void SampleTableDoc_Conversion_PreservesFourthTopLevelTableFixedRowHeightColumns()
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+            var inputPath = Path.Combine(repoRoot, "samples", "table.doc");
+            var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+            try
+            {
+                DocToDocxConverter.Convert(inputPath, outputPath);
+
+                using var archive = new ZipArchive(File.OpenRead(outputPath), ZipArchiveMode.Read);
+                var documentXml = new StreamReader(archive.GetEntry("word/document.xml").Open()).ReadToEnd();
+                var xDocument = XDocument.Parse(documentXml);
+                XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                var fixedRowHeightTable = xDocument
+                    .Descendants(w + "tbl")
+                    .Where(tbl => !tbl.Ancestors(w + "tbl").Any())
+                    .Skip(3)
+                    .First();
+
+                var rows = fixedRowHeightTable.Elements(w + "tr").ToList();
+                var gridColumns = fixedRowHeightTable.Elements(w + "tblGrid").Elements(w + "gridCol").ToList();
+
+                Assert.Equal(2, rows.Count);
+                Assert.Equal(3, gridColumns.Count);
+                Assert.All(rows, row => Assert.Equal(3, row.Elements(w + "tc").Count()));
+            }
+            finally
+            {
+                if (File.Exists(outputPath))
+                    File.Delete(outputPath);
+            }
+        }
+
+        [Fact]
         public void SampleTableDoc_Conversion_PreservesSecondTopLevelTableWithoutMergingFirstRowSecondCell()
         {
             var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));

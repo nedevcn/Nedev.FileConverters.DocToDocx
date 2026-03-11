@@ -1073,12 +1073,23 @@ public class TableReader
         if (!encodesMultipleCells)
             return false;
 
+        int inferredCompactColumnCount = 0;
+        if (rowCandidates.All(cells => cells.Count == 1))
+        {
+            inferredCompactColumnCount = InferCompactTrailingEmptyColumnCount(paragraph);
+        }
+
         var recoveredRowAlignments = GetCompactRowAlignments(paragraph, rowCandidates.Count);
         int recoveredRowIndex = 0;
 
         foreach (var recoveredCells in rowCandidates)
         {
             ctx.CurrentRowTap = tapForParagraph;
+
+            while (inferredCompactColumnCount > 0 && recoveredCells.Count < inferredCompactColumnCount)
+            {
+                recoveredCells.Add(new RecoveredCell { SourceParagraph = paragraph });
+            }
 
             foreach (var recoveredCell in recoveredCells)
             {
@@ -1098,6 +1109,18 @@ public class TableReader
         }
 
         return true;
+    }
+
+    private static int InferCompactTrailingEmptyColumnCount(ParagraphModel paragraph)
+    {
+        if (string.IsNullOrEmpty(paragraph.RawText))
+            return 0;
+
+        return Regex.Matches(paragraph.RawText, "\\x07{2,}")
+            .Cast<Match>()
+            .Select(match => Math.Max(1, match.Length - 1))
+            .DefaultIfEmpty(0)
+            .Max();
     }
 
     private List<ParagraphAlignment> GetCompactRowAlignments(ParagraphModel paragraph, int expectedRowCount)
@@ -2254,6 +2277,17 @@ public class TableReader
             .DefaultIfEmpty(0)
             .Max();
 
+        if (currentColumnCount == 1 && table.Rows.All(row => row.Cells.Count == 1))
+        {
+            columnCount = Math.Max(
+                columnCount,
+                sourceParagraphs
+                    .Select(GetTrailingCellBoundaryColumnCount)
+                    .Where(count => count > 0)
+                    .DefaultIfEmpty(0)
+                    .Max());
+        }
+
         if (columnCount <= currentColumnCount)
             return false;
 
@@ -2287,6 +2321,15 @@ public class TableReader
         }
 
         return true;
+    }
+
+    private static int GetTrailingCellBoundaryColumnCount(ParagraphModel paragraph)
+    {
+        if (string.IsNullOrEmpty(paragraph.RawText))
+            return 0;
+
+        var trailingBoundaryMatch = Regex.Match(paragraph.RawText, "\\x07+$");
+        return trailingBoundaryMatch.Success ? trailingBoundaryMatch.Length : 0;
     }
 
     private static bool TryInferCalendarMonthWidthTemplate(TableModel table, out int[]? widthTemplate)
