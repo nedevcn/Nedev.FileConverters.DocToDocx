@@ -342,6 +342,9 @@ public class SprmParser
 
     private void ApplyPapSprm(Sprm sprm, PapBase pap)
     {
+        if (TryApplyParagraphBorderSprm(sprm, pap))
+            return;
+
         switch (sprm.Code)
         {
             case 0x2403: // sprmPJc80
@@ -408,6 +411,7 @@ public class SprmParser
             case 0x12: // sprmPDyaLine — LSPD structure: low 16 bits = dyaLine (signed), bit 16 = fMultLinespace
                 pap.LineSpacing = (int)(short)(sprm.Operand & 0xFFFF);
                 pap.LineSpacingMultiple = (int)((sprm.Operand >> 16) & 1);
+                pap.HasExplicitLineSpacing = true;
                 break;
             case 0x13: pap.SpaceBefore = (int)(short)sprm.Operand; break; // sprmPDyaBefore
             case 0x14: pap.SpaceAfter = (int)(short)sprm.Operand; break; // sprmPDyaAfter
@@ -783,6 +787,61 @@ public class SprmParser
         return (value * 240 + 50) / 100;
     }
 
+    private static bool TryApplyParagraphBorderSprm(Sprm sprm, PapBase pap)
+    {
+        switch (sprm.Code)
+        {
+            case 0x6424:
+                pap.BorderTop = DecodeBrc(sprm.Operand);
+                return true;
+            case 0x6425:
+                pap.BorderLeft = DecodeBrc(sprm.Operand);
+                return true;
+            case 0x6426:
+                pap.BorderBottom = DecodeBrc(sprm.Operand);
+                return true;
+            case 0x6427:
+                pap.BorderRight = DecodeBrc(sprm.Operand);
+                return true;
+            case 0xC64E:
+                pap.BorderTop = DecodeParagraphBorderVariableOperand(sprm.VariableOperand, pap.BorderTop);
+                return true;
+            case 0xC64F:
+                pap.BorderLeft = DecodeParagraphBorderVariableOperand(sprm.VariableOperand, pap.BorderLeft);
+                return true;
+            case 0xC650:
+                pap.BorderBottom = DecodeParagraphBorderVariableOperand(sprm.VariableOperand, pap.BorderBottom);
+                return true;
+            case 0xC651:
+                pap.BorderRight = DecodeParagraphBorderVariableOperand(sprm.VariableOperand, pap.BorderRight);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static BorderInfo? DecodeParagraphBorderVariableOperand(byte[]? operand, BorderInfo? fallback)
+    {
+        if (operand == null || operand.Length < 8)
+            return fallback;
+
+        uint colorRef = BitConverter.ToUInt32(operand, 0);
+        int width = operand[4];
+        int borderType = operand[5];
+        int space = operand[6];
+
+        if (width == 0 && borderType == 0 && space == 0 && colorRef == 0)
+            return fallback;
+
+        return new BorderInfo
+        {
+            Style = MapBorderStyle(borderType),
+            Width = width,
+            Space = space,
+            Color = ResolveBorderColor(ico: 0, colorRef)
+        };
+    }
+
     /// <summary>
     /// Parses SHD/SHDOperand: full Shd (cvFore 4, cvBack 4, ipat 2) or legacy icoFore/icoBack (2+2).
     /// COLORREF is 0x00BBGGRR; we output RGB as int for ColorHelper.
@@ -877,7 +936,23 @@ public class SprmParser
         var ico          = (int)((brc >> 16) & 0xFF);  // bits 16-23
         var dptSpace     = (int)((brc >> 24) & 0x1F);  // bits 24-28
 
-        var style = brcType switch
+        var style = MapBorderStyle(brcType);
+
+        // dptLineWidth is in 1/8 pt; OOXML w:sz is in 1/8 pt, so use directly
+        var widthEighthPt = dptLineWidth;
+
+        return new BorderInfo
+        {
+            Style = style,
+            Width = widthEighthPt,
+            Color = ResolveBorderColor(ico, colorRef),
+            Space = dptSpace
+        };
+    }
+
+    private static BorderStyle MapBorderStyle(int brcType)
+    {
+        return brcType switch
         {
             0 => BorderStyle.None,
             1 => BorderStyle.Single,
@@ -899,17 +974,6 @@ public class SprmParser
             18 => BorderStyle.ThinThickThinLargeGap,
             19 => BorderStyle.Wave,
             _ => BorderStyle.Single
-        };
-
-        // dptLineWidth is in 1/8 pt; OOXML w:sz is in 1/8 pt, so use directly
-        var widthEighthPt = dptLineWidth;
-
-        return new BorderInfo
-        {
-            Style = style,
-            Width = widthEighthPt,
-            Color = ResolveBorderColor(ico, colorRef),
-            Space = dptSpace
         };
     }
 
@@ -1031,10 +1095,15 @@ public class PapBase
     public int IndentFirstLineChars { get; set; }
     public int LineSpacing { get; set; } = 240;
     public int LineSpacingMultiple { get; set; } = 1;
+    public bool HasExplicitLineSpacing { get; set; }
     public int SpaceBefore { get; set; }
     public int SpaceBeforeLines { get; set; }
     public int SpaceAfter { get; set; }
     public int SpaceAfterLines { get; set; }
+    public BorderInfo? BorderTop { get; set; }
+    public BorderInfo? BorderBottom { get; set; }
+    public BorderInfo? BorderLeft { get; set; }
+    public BorderInfo? BorderRight { get; set; }
     // Phase 3 additions
     public byte OutlineLevel { get; set; } = 9; // 9 = body text
     public int NestIndent { get; set; }

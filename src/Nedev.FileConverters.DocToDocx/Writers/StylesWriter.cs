@@ -239,6 +239,7 @@ public class StylesWriter
             SpaceAfterLines = source.SpaceAfterLines,
             LineSpacing = source.LineSpacing,
             LineSpacingMultiple = source.LineSpacingMultiple,
+            HasExplicitLineSpacing = source.HasExplicitLineSpacing,
             KeepWithNext = source.KeepWithNext,
             KeepTogether = source.KeepTogether,
             PageBreakBefore = source.PageBreakBefore,
@@ -791,13 +792,18 @@ public class StylesWriter
         const string wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
         _writer.WriteStartElement("w", "pPr", wNs);
 
-        // Borders
-        // Note: for styles, we currently omit pBdr/shd here to keep
-        // implementation simple; paragraph-level borders/shading are
-        // still written at the document level by DocumentWriter.
+        if (props.BorderTop != null || props.BorderBottom != null || props.BorderLeft != null || props.BorderRight != null)
+        {
+            _writer.WriteStartElement("w", "pBdr", wNs);
+            if (props.BorderTop != null) WriteStyleBorder("top", props.BorderTop);
+            if (props.BorderBottom != null) WriteStyleBorder("bottom", props.BorderBottom);
+            if (props.BorderLeft != null) WriteStyleBorder("left", props.BorderLeft);
+            if (props.BorderRight != null) WriteStyleBorder("right", props.BorderRight);
+            _writer.WriteEndElement();
+        }
 
         // Spacing
-        bool hasExplicitLineSpacing = props.LineSpacing != 240 || props.LineSpacingMultiple != 1;
+        bool hasExplicitLineSpacing = props.HasExplicitLineSpacing || props.LineSpacing != 240 || props.LineSpacingMultiple != 1;
         if (props.SpaceBefore > 0 || props.SpaceBeforeLines > 0 || props.SpaceAfter > 0 || props.SpaceAfterLines > 0 || hasExplicitLineSpacing)
         {
             _writer.WriteStartElement("w", "spacing", wNs);

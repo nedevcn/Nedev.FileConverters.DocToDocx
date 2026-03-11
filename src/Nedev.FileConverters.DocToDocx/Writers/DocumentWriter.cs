@@ -914,7 +914,7 @@ public partial class DocumentWriter
 
         // 8. spacing
         bool hasExplicitLineSpacing = props != null &&
-            (props.LineSpacing != 240 || props.LineSpacingMultiple != 1);
+            (props.HasExplicitLineSpacing || props.LineSpacing != 240 || props.LineSpacingMultiple != 1);
         if (props != null && (props.SpaceBefore > 0 || props.SpaceBeforeLines > 0 || props.SpaceAfter > 0 || props.SpaceAfterLines > 0 || hasExplicitLineSpacing))
         {
             _writer.WriteStartElement("w", "spacing", wNs);

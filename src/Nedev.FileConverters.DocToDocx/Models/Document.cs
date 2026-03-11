@@ -297,6 +297,7 @@ public class ParagraphProperties
     public int SpaceAfterLines { get; set; }
     public int LineSpacing { get; set; } = 240;
     public int LineSpacingMultiple { get; set; } = 1;
+    public bool HasExplicitLineSpacing { get; set; }
     public bool KeepWithNext { get; set; }
     public bool KeepTogether { get; set; }
     public bool PageBreakBefore { get; set; }
@@ -351,8 +352,17 @@ public class ParagraphProperties
             if (baseProps.SpaceAfter != 0) SpaceAfter = baseProps.SpaceAfter;
             else if (baseProps.SpaceAfterLines != 0) SpaceAfterLines = baseProps.SpaceAfterLines;
         }
-        if (LineSpacing == 240 && baseProps.LineSpacing != 240) LineSpacing = baseProps.LineSpacing;
-        if (LineSpacingMultiple == 1 && baseProps.LineSpacingMultiple != 1) LineSpacingMultiple = baseProps.LineSpacingMultiple;
+        if (!HasExplicitLineSpacing && baseProps.HasExplicitLineSpacing)
+        {
+            LineSpacing = baseProps.LineSpacing;
+            LineSpacingMultiple = baseProps.LineSpacingMultiple;
+            HasExplicitLineSpacing = true;
+        }
+        else if (!HasExplicitLineSpacing)
+        {
+            if (LineSpacing == 240 && baseProps.LineSpacing != 240) LineSpacing = baseProps.LineSpacing;
+            if (LineSpacingMultiple == 1 && baseProps.LineSpacingMultiple != 1) LineSpacingMultiple = baseProps.LineSpacingMultiple;
+        }
 
         if (!KeepWithNext && baseProps.KeepWithNext) KeepWithNext = baseProps.KeepWithNext;
         if (!KeepTogether && baseProps.KeepTogether) KeepTogether = baseProps.KeepTogether;

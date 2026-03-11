@@ -576,6 +576,69 @@ public class DocToDocxConverterTests
     }
 
     [Fact]
+    public void LoadDocument_Sample1Doc_PreservesDocumentTitleParagraphBorderAndSingleLineSpacing()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+
+        var document = DocToDocxConverter.LoadDocument(inputPath);
+        var paragraph = document.Paragraphs.First(p => string.Equals(p.Text, "Demonstration of DOCX support in calibre", StringComparison.Ordinal));
+
+        Assert.NotNull(paragraph.Properties);
+        Assert.Equal(240, paragraph.Properties!.LineSpacing);
+        Assert.Equal(1, paragraph.Properties.LineSpacingMultiple);
+
+        var bottomBorder = paragraph.Properties.BorderBottom;
+        Assert.NotNull(bottomBorder);
+        Assert.Equal(BorderStyle.Single, bottomBorder!.Style);
+        Assert.Equal(8, bottomBorder.Width);
+        Assert.Equal(4, bottomBorder.Space);
+        Assert.Equal(0xBD814Fu, (uint)bottomBorder.Color);
+    }
+
+    [Fact]
+    public void ConvertWithWarnings_Sample1Doc_PreservesDocumentTitleParagraphBorderAndSingleLineSpacing()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var inputPath = Path.Combine(repoRoot, "samples", "sample1.doc");
+        var outputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".docx");
+
+        try
+        {
+            DocToDocxConverter.ConvertWithWarnings(inputPath, outputPath);
+
+            using var archive = ZipFile.OpenRead(outputPath);
+            var document = XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+            var paragraph = document
+                .Descendants(w + "p")
+                .FirstOrDefault(p => string.Equals(string.Concat(p.Descendants(w + "t").Select(t => (string?)t)), "Demonstration of DOCX support in calibre", StringComparison.Ordinal));
+
+            Assert.NotNull(paragraph);
+
+            var paragraphProperties = paragraph!.Element(w + "pPr");
+            Assert.NotNull(paragraphProperties);
+
+            var spacing = paragraphProperties!.Element(w + "spacing");
+            Assert.NotNull(spacing);
+            Assert.Equal("240", (string?)spacing!.Attribute(w + "line"));
+            Assert.Equal("auto", (string?)spacing.Attribute(w + "lineRule"));
+
+            var bottomBorder = paragraphProperties.Element(w + "pBdr")?.Element(w + "bottom");
+            Assert.NotNull(bottomBorder);
+            Assert.Equal("single", (string?)bottomBorder!.Attribute(w + "val"));
+            Assert.Equal("8", (string?)bottomBorder.Attribute(w + "sz"));
+            Assert.Equal("4", (string?)bottomBorder.Attribute(w + "space"));
+            Assert.Equal("4F81BD", (string?)bottomBorder.Attribute(w + "color"));
+        }
+        finally
+        {
+            DeleteIfExists(outputPath);
+        }
+    }
+
+    [Fact]
     public void LoadDocument_Sample1Doc_PreservesSimpleTableHeaderAndBodyRunFormatting()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));

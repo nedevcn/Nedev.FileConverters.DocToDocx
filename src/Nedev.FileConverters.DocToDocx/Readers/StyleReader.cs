@@ -441,7 +441,8 @@ public class StyleReader
                 if (i == 0) // PAP UPX
                 {
                     var pap = new PapBase();
-                    sprmParser.ApplyToPap(GetParagraphStylePapGrpprl(grpprl), pap);
+                    var papGrpprl = GetParagraphStylePapGrpprl(grpprl);
+                    sprmParser.ApplyToPap(papGrpprl, pap);
                     style.ParagraphProperties = ConvertToParagraphProperties(pap);
                 }
                 else if (i == 1) // CHP UPX — some docs prefix it with a 2-byte char style ref, others do not
@@ -675,9 +676,14 @@ public class StyleReader
             SpaceAfterLines = pap.SpaceAfterLines,
             LineSpacing = pap.LineSpacing,
             LineSpacingMultiple = pap.LineSpacingMultiple,
+            HasExplicitLineSpacing = pap.HasExplicitLineSpacing,
             KeepWithNext = pap.KeepWithNext,
             KeepTogether = pap.KeepTogether,
             PageBreakBefore = pap.PageBreakBefore,
+            BorderTop = pap.BorderTop,
+            BorderBottom = pap.BorderBottom,
+            BorderLeft = pap.BorderLeft,
+            BorderRight = pap.BorderRight,
             ListFormatId = pap.ListFormatId,
             ListLevel = pap.ListLevel,
             OutlineLevel = pap.OutlineLevel,

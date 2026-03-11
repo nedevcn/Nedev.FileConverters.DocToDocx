@@ -2011,7 +2011,18 @@ public class DocReader : IDisposable
             if (paragraphProps.SpaceAfter == 0 && paragraphProps.SpaceAfterLines == 0 && sp.SpaceAfterLines != 0)
                 paragraphProps.SpaceAfterLines = sp.SpaceAfterLines;
 
-            if (paragraphProps.LineSpacing == 240 && sp.LineSpacing != 240)
+            paragraphProps.BorderTop ??= sp.BorderTop;
+            paragraphProps.BorderBottom ??= sp.BorderBottom;
+            paragraphProps.BorderLeft ??= sp.BorderLeft;
+            paragraphProps.BorderRight ??= sp.BorderRight;
+
+            if (!paragraphProps.HasExplicitLineSpacing && sp.HasExplicitLineSpacing)
+            {
+                paragraphProps.LineSpacing = sp.LineSpacing;
+                paragraphProps.LineSpacingMultiple = sp.LineSpacingMultiple;
+                paragraphProps.HasExplicitLineSpacing = true;
+            }
+            else if (!paragraphProps.HasExplicitLineSpacing && paragraphProps.LineSpacing == 240 && sp.LineSpacing != 240)
             {
                 paragraphProps.LineSpacing = sp.LineSpacing;
                 paragraphProps.LineSpacingMultiple = sp.LineSpacingMultiple;
@@ -2243,7 +2254,13 @@ public class DocReader : IDisposable
             target.SpaceAfterLines = overlay.SpaceAfterLines;
             target.SpaceAfter = 0;
         }
-        if (overlay.LineSpacing != 240 || overlay.LineSpacingMultiple != 1)
+        if (overlay.HasExplicitLineSpacing)
+        {
+            target.LineSpacing = overlay.LineSpacing;
+            target.LineSpacingMultiple = overlay.LineSpacingMultiple;
+            target.HasExplicitLineSpacing = true;
+        }
+        else if (!target.HasExplicitLineSpacing && (overlay.LineSpacing != 240 || overlay.LineSpacingMultiple != 1))
         {
             target.LineSpacing = overlay.LineSpacing;
             target.LineSpacingMultiple = overlay.LineSpacingMultiple;
@@ -2254,6 +2271,14 @@ public class DocReader : IDisposable
             target.KeepTogether = true;
         if (overlay.PageBreakBefore)
             target.PageBreakBefore = true;
+        if (overlay.BorderTop != null)
+            target.BorderTop = overlay.BorderTop;
+        if (overlay.BorderBottom != null)
+            target.BorderBottom = overlay.BorderBottom;
+        if (overlay.BorderLeft != null)
+            target.BorderLeft = overlay.BorderLeft;
+        if (overlay.BorderRight != null)
+            target.BorderRight = overlay.BorderRight;
         if (overlay.ListFormatId != 0)
             target.ListFormatId = overlay.ListFormatId;
         if (overlay.ListLevel != 0)
