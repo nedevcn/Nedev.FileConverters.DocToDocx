@@ -70,9 +70,11 @@ public partial class CfbReader : IDisposable
     public CfbReader(string filePath)
     {
         _stream = File.OpenRead(filePath);
+        BinaryReader? reader = null;
         try
         {
-            _reader = new BinaryReader(_stream, Encoding.Default, leaveOpen: false);
+            reader = new BinaryReader(_stream, Encoding.Default, leaveOpen: false);
+            _reader = reader;
             _leaveOpen = false;
             Parse();
         }
@@ -81,14 +83,8 @@ public partial class CfbReader : IDisposable
             // if parsing fails (e.g. file is not a CFB container) we must
             // close the stream so callers can delete the file later.
             // Ensure we clean up any resources that were created
-            if (_reader != null)
-            {
-                _reader.Dispose();
-            }
-            else
-            {
-                _stream?.Dispose();
-            }
+            reader?.Dispose();
+            _stream?.Dispose();
             throw;
         }
     }

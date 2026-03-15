@@ -23,6 +23,85 @@ public static class DocToDocxConverter
         "word/document.xml"
     };
 
+    #region ConversionOptions-based APIs (New)
+
+    /// <summary>
+    /// Converts a DOC file to DOCX format using the specified options.
+    /// </summary>
+    /// <param name="inputPath">Path to the input .doc file</param>
+    /// <param name="outputPath">Path to the output .docx file</param>
+    /// <param name="options">Conversion options</param>
+    /// <exception cref="ArgumentNullException">Thrown when options is null</exception>
+    public static void Convert(string inputPath, string outputPath, ConversionOptions options)
+    {
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        options.Validate();
+
+        // Check file size limit
+        var fileInfo = new FileInfo(inputPath);
+        options.ValidateFileSize(fileInfo.Length);
+
+        Convert(inputPath, outputPath, progress: null, options.Password, options.EnableHyperlinks, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Converts a DOC file to DOCX format using the specified options with progress reporting.
+    /// </summary>
+    /// <param name="inputPath">Path to the input .doc file</param>
+    /// <param name="outputPath">Path to the output .docx file</param>
+    /// <param name="options">Conversion options</param>
+    /// <param name="progress">Progress reporter</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public static void Convert(string inputPath, string outputPath, ConversionOptions options, IProgress<ConversionProgress>? progress, CancellationToken cancellationToken = default)
+    {
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        options.Validate();
+        Convert(inputPath, outputPath, progress, options.Password, options.EnableHyperlinks, cancellationToken);
+    }
+
+    /// <summary>
+    /// Converts a DOC file to DOCX format asynchronously using the specified options.
+    /// </summary>
+    /// <param name="inputPath">Path to the input .doc file</param>
+    /// <param name="outputPath">Path to the output .docx file</param>
+    /// <param name="options">Conversion options</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public static Task ConvertAsync(string inputPath, string outputPath, ConversionOptions options, CancellationToken cancellationToken = default)
+    {
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        options.Validate();
+        return Task.Run(() => Convert(inputPath, outputPath, options, progress: null, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream using the specified options.
+    /// </summary>
+    /// <param name="inputStream">Input stream containing DOC data</param>
+    /// <param name="outputStream">Output stream for DOCX data</param>
+    /// <param name="options">Conversion options</param>
+    public static void Convert(Stream inputStream, Stream outputStream, ConversionOptions options)
+    {
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        options.Validate();
+        Convert(inputStream, outputStream, progress: null, options.Password, options.EnableHyperlinks, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Converts a DOC stream to a DOCX stream asynchronously using the specified options.
+    /// </summary>
+    /// <param name="inputStream">Input stream containing DOC data</param>
+    /// <param name="outputStream">Output stream for DOCX data</param>
+    /// <param name="options">Conversion options</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public static Task ConvertAsync(Stream inputStream, Stream outputStream, ConversionOptions options, CancellationToken cancellationToken = default)
+    {
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        options.Validate();
+        return Task.Run(() => Convert(inputStream, outputStream, options), cancellationToken);
+    }
+
+    #endregion
+
     /// <summary>
         /// Converts a DOC file to DOCX format from disk paths.
     /// </summary>
@@ -164,6 +243,11 @@ public static class DocToDocxConverter
     public static void Convert(string inputPath, string outputPath, IProgress<ConversionProgress>? progress, string? password, bool enableHyperlinks, CancellationToken cancellationToken)
     {
         ValidateConversionPaths(inputPath, outputPath);
+
+        // Check file size limit (default 100MB)
+        var fileInfo = new FileInfo(inputPath);
+        var defaultOptions = ConversionOptions.Default;
+        defaultOptions.ValidateFileSize(fileInfo.Length);
 
         try
         {
@@ -508,11 +592,19 @@ public static class DocToDocxConverter
     {
         return new XmlReaderSettings
         {
+            // Security: Disable DTD processing to prevent XXE attacks
             DtdProcessing = DtdProcessing.Prohibit,
+            // Security: Disable XML external entity resolution
+            XmlResolver = null,
+            // Performance: Ignore unnecessary content
             IgnoreComments = true,
             IgnoreProcessingInstructions = true,
             IgnoreWhitespace = true,
-            CloseInput = true
+            // Ensure stream is closed when reader is disposed
+            CloseInput = true,
+            // Security: Limit maximum characters in entities to prevent billion laughs attack
+            MaxCharactersInDocument = 100_000_000, // 100MB limit
+            MaxCharactersFromEntities = 10_000_000 // 10MB from entities
         };
     }
 

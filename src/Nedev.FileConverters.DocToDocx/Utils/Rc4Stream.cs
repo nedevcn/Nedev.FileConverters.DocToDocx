@@ -116,13 +116,20 @@ public class Rc4Stream : Stream
             if (_currentBlock != targetBlock || _decryptor == null)
             {
                 InitializeBlock(targetBlock);
-                
+
                 // If we jumped into the middle of a block, we need to advance the cipher state by encrypting dummy bytes
                 int blockOffset = (int)(logicalPosition % 512);
                 if (blockOffset > 0)
                 {
-                    byte[] dummy = new byte[blockOffset];
-                    _decryptor!.TransformBlock(dummy, 0, blockOffset, dummy, 0);
+                    byte[] dummy = System.Buffers.ArrayPool<byte>.Shared.Rent(blockOffset);
+                    try
+                    {
+                        _decryptor!.TransformBlock(dummy, 0, blockOffset, dummy, 0);
+                    }
+                    finally
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(dummy);
+                    }
                 }
             }
 

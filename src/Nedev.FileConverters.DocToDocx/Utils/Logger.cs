@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 
@@ -14,13 +15,67 @@ public static class Logger
         public CaptureScopeState(CaptureScopeState? parent, ICollection<string>? warnings, ICollection<ConversionDiagnostic>? diagnostics)
         {
             Parent = parent;
-            Warnings = warnings;
-            Diagnostics = diagnostics;
+            // Use concurrent collections to ensure thread safety
+            Warnings = warnings is not null ? new ConcurrentCollectionWrapper<string>(warnings) : null;
+            Diagnostics = diagnostics is not null ? new ConcurrentCollectionWrapper<ConversionDiagnostic>(diagnostics) : null;
         }
 
         public CaptureScopeState? Parent { get; }
         public ICollection<string>? Warnings { get; }
         public ICollection<ConversionDiagnostic>? Diagnostics { get; }
+    }
+
+    /// <summary>
+/// Thread-safe wrapper for collections that may be accessed from multiple threads.
+    /// </summary>
+    private sealed class ConcurrentCollectionWrapper<T> : ICollection<T>
+    {
+        private readonly ICollection<T> _inner;
+        private readonly object _lock = new();
+
+        public ConcurrentCollectionWrapper(ICollection<T> inner)
+        {
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        }
+
+        public int Count
+        {
+            get { lock (_lock) return _inner.Count; }
+        }
+
+        public bool IsReadOnly => _inner.IsReadOnly;
+
+        public void Add(T item)
+        {
+            lock (_lock) _inner.Add(item);
+        }
+
+        public void Clear()
+        {
+            lock (_lock) _inner.Clear();
+        }
+
+        public bool Contains(T item)
+        {
+            lock (_lock) return _inner.Contains(item);
+        }
+
+        public void CopyTo(T[] array, int arrayIndex)
+        {
+            lock (_lock) _inner.CopyTo(array, arrayIndex);
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            lock (_lock) return _inner.ToList().GetEnumerator();
+        }
+
+        public bool Remove(T item)
+        {
+            lock (_lock) return _inner.Remove(item);
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private sealed class CaptureScope : IDisposable

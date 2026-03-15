@@ -62,16 +62,23 @@ public class ZipWriter : IDisposable
     {
         var entry = _archive.CreateEntry(entryName, CompressionLevel.Optimal);
         using var stream = entry.Open();
-        
-        var buffer = new byte[8192];
-        var totalRead = 0;
-        
-        while (totalRead < length)
+
+        var buffer = BufferPool.RentStreamBuffer();
+        try
         {
-            var read = dataStream.Read(buffer, 0, Math.Min(buffer.Length, length - totalRead));
-            if (read == 0) break;
-            stream.Write(buffer, 0, read);
-            totalRead += read;
+            var totalRead = 0;
+
+            while (totalRead < length)
+            {
+                var read = dataStream.Read(buffer, 0, Math.Min(buffer.Length, length - totalRead));
+                if (read == 0) break;
+                stream.Write(buffer, 0, read);
+                totalRead += read;
+            }
+        }
+        finally
+        {
+            BufferPool.ReturnStreamBuffer(buffer);
         }
     }
     
