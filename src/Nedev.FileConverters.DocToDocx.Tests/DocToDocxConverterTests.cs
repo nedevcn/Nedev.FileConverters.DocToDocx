@@ -62,13 +62,13 @@ public class DocToDocxConverterTests
 
         try
         {
-            var exception = Assert.Throws<InvalidDataException>(() =>
+            var exception = Assert.Throws<CorruptedFileException>(() =>
                 DocToDocxConverter.Convert(inputPath, outputPath, progress, password: null, enableHyperlinks: true));
 
-            Assert.Contains("Unsupported input format", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("corrupted", exception.Message, StringComparison.OrdinalIgnoreCase);
             Assert.NotEmpty(updates);
             Assert.Equal(ConversionStage.Error, updates[^1].Stage);
-            Assert.Contains("Unsupported input format", updates[^1].Message, StringComparison.Ordinal);
+            Assert.Contains("Invalid document format", updates[^1].Message, StringComparison.Ordinal);
         }
         finally
         {

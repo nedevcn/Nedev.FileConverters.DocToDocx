@@ -285,10 +285,40 @@ public static class DocToDocxConverter
             Report(progress, ConversionStage.Error, 100, "Conversion canceled.");
             throw;
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            Logger.Error($"Encryption error for '{inputPath}': {ex.Message}");
+            Report(progress, ConversionStage.Error, 100, $"Document is encrypted or password is incorrect: {ex.Message}");
+            throw new EncryptionException($"Failed to decrypt document '{inputPath}'. The document may be encrypted or the password is incorrect.", ex);
+        }
+        catch (InvalidDataException ex)
+        {
+            Logger.Error($"Invalid data in '{inputPath}': {ex.Message}");
+            Report(progress, ConversionStage.Error, 100, $"Invalid document format: {ex.Message}");
+            throw new CorruptedFileException($"The file '{inputPath}' appears to be corrupted or is not a valid Word document.", ex);
+        }
+        catch (IOException ex)
+        {
+            Logger.Error($"IO error processing '{inputPath}': {ex.Message}");
+            Report(progress, ConversionStage.Error, 100, $"File access error: {ex.Message}");
+            throw new ConversionException(ConversionErrorType.IOError, $"Failed to access file '{inputPath}': {ex.Message}", inputPath, ex);
+        }
+        catch (OutOfMemoryException ex)
+        {
+            Logger.Error($"Out of memory processing '{inputPath}': {ex.Message}");
+            Report(progress, ConversionStage.Error, 100, "Insufficient memory to process document.");
+            throw new ConversionException(ConversionErrorType.OutOfMemory, $"The document '{inputPath}' is too large to process with available memory.", inputPath, ex);
+        }
+        catch (ConversionException)
+        {
+            // Re-throw conversion exceptions as-is
+            throw;
+        }
         catch (Exception ex)
         {
-            Report(progress, ConversionStage.Error, 100, ex.Message);
-            throw;
+            Logger.Error($"Unexpected error converting '{inputPath}': {ex}");
+            Report(progress, ConversionStage.Error, 100, $"Conversion failed: {ex.Message}");
+            throw new ConversionException(ConversionErrorType.Unknown, $"An unexpected error occurred while converting '{inputPath}': {ex.Message}", inputPath, ex);
         }
     }
 

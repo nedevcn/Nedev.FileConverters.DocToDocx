@@ -45,6 +45,14 @@ public partial class DocumentWriter
     /// <summary>When true, do not emit pageBreakBefore so leading content (e.g. 绿色等级评价报告) stays on page 1.</summary>
     private bool _suppressLeadingPageBreak;
 
+    // Compiled regex patterns for better performance
+    private static readonly Regex HyperlinkFieldRegex = new(
+        "\\s*HYPERLINK\\s+\"[^\"]*\"\\s*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex MultipleSpacesRegex = new(
+        "[ ]{2,}",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// Creates a document writer for the target XML stream.
     /// </summary>
@@ -2278,13 +2286,8 @@ public partial class DocumentWriter
         if (string.IsNullOrEmpty(text))
             return text;
 
-        string sanitized = Regex.Replace(
-            text,
-            "\\s*HYPERLINK\\s+\"[^\"]*\"\\s*",
-            " ",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-        sanitized = Regex.Replace(sanitized, "[ ]{2,}", " ");
+        string sanitized = HyperlinkFieldRegex.Replace(text, " ");
+        sanitized = MultipleSpacesRegex.Replace(sanitized, " ");
         return sanitized;
     }
 

@@ -69,6 +69,16 @@ public partial class CfbReader : IDisposable
 
     public CfbReader(string filePath)
     {
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("File path cannot be null or empty.", nameof(filePath));
+
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"File not found: '{filePath}'", filePath);
+
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length < CfbSignature.Length)
+            throw new InvalidDataException($"File is too small to be a valid CFB container: '{filePath}'");
+
         _stream = File.OpenRead(filePath);
         BinaryReader? reader = null;
         try
@@ -91,6 +101,15 @@ public partial class CfbReader : IDisposable
 
     public CfbReader(Stream stream, bool leaveOpen = false)
     {
+        if (stream == null)
+            throw new ArgumentNullException(nameof(stream));
+
+        if (!stream.CanRead)
+            throw new ArgumentException("Stream must be readable.", nameof(stream));
+
+        if (stream.Length < CfbSignature.Length)
+            throw new InvalidDataException("Stream is too small to be a valid CFB container.");
+
         _stream = stream;
         _reader = new BinaryReader(_stream, Encoding.Default, leaveOpen: true);
         _leaveOpen = leaveOpen;

@@ -43,6 +43,13 @@ public class TableReader
     private const int MaxNestingDepth = 20;
     private const int MaxRowsPerTable = 10000;
     private static readonly string _debugLogBaseName = "table_reader_debug";
+
+    // Compiled regex patterns for better performance
+    private static readonly Regex CellBoundaryRegex = new("\x07+", RegexOptions.Compiled);
+    private static readonly Regex MultiCellBoundaryRegex = new("\x07{2,}", RegexOptions.Compiled);
+    private static readonly Regex TrailingBoundaryRegex = new("\x07+$", RegexOptions.Compiled);
+    private static readonly Regex LineBreakRegex = new("(?:\r+|\x07{2,})", RegexOptions.Compiled);
+    private static readonly Regex SectionTitleRegex = new("(?<cell>.*?)(?<trail>(第[一二三四五六七八九十百0-9]+条[：:].*|[0-9]+\\.[0-9].*))$", RegexOptions.Compiled);
     private readonly string _debugLogPath;
     private DocumentProperties? _documentProperties;
     private readonly List<(int AfterParagraphIndex, List<ParagraphModel> Paragraphs)> _pendingRecoveredParagraphInsertions = new();
@@ -1068,7 +1075,7 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             return 0;
 
-        int maxMarkerRun = Regex.Matches(paragraph.RawText, "\x07{2,}")
+        int maxMarkerRun = MultiCellBoundaryRegex.Matches(paragraph.RawText)
             .Cast<Match>()
             .Select(match => match.Length)
             .DefaultIfEmpty(0)
@@ -1445,10 +1452,10 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             return false;
 
-        var tokens = Regex.Split(paragraph.RawText, "\\x07+")
+        var tokens = CellBoundaryRegex.Split(paragraph.RawText)
             .Where(token => !string.IsNullOrWhiteSpace(token))
             .ToList();
-        var gaps = Regex.Matches(paragraph.RawText, "\\x07+")
+        var gaps = CellBoundaryRegex.Matches(paragraph.RawText)
             .Cast<Match>()
             .Select(match => match.Length)
             .ToList();
@@ -2039,7 +2046,7 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             return 0;
 
-        return Regex.Matches(paragraph.RawText, "\\x07{2,}")
+        return MultiCellBoundaryRegex.Matches(paragraph.RawText)
             .Cast<Match>()
             .Select(match => Math.Max(1, match.Length - 1))
             .DefaultIfEmpty(0)
@@ -2191,7 +2198,7 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             yield break;
 
-        foreach (var rawLine in Regex.Split(paragraph.RawText, "(?:\r+|\x07{2,})"))
+        foreach (var rawLine in LineBreakRegex.Split(paragraph.RawText))
         {
             bool endsWithCellSeparator = rawLine.EndsWith("\x07", StringComparison.Ordinal);
             var cells = rawLine
@@ -2510,7 +2517,7 @@ public class TableReader
             return string.Empty;
 
         var lastCell = cells[columnCount - 1].Text;
-        var match = Regex.Match(lastCell, "(?<cell>.*?)(?<trail>(第[一二三四五六七八九十百0-9]+条[：:].*|[0-9]+\\.[0-9].*))$");
+        var match = SectionTitleRegex.Match(lastCell);
         if (!match.Success)
             return string.Empty;
 
@@ -3747,7 +3754,7 @@ public class TableReader
         if (string.IsNullOrEmpty(paragraph.RawText))
             return 0;
 
-        var trailingBoundaryMatch = Regex.Match(paragraph.RawText, "\\x07+$");
+        var trailingBoundaryMatch = TrailingBoundaryRegex.Match(paragraph.RawText);
         return trailingBoundaryMatch.Success ? trailingBoundaryMatch.Length : 0;
     }
 

@@ -75,15 +75,40 @@ public class DocReader : IDisposable
 
     public DocReader(string filePath, string? password = null)
     {
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("File path cannot be null or empty.", nameof(filePath));
+
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"File not found: '{filePath}'", filePath);
+
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length == 0)
+            throw new InvalidDataException($"File is empty: '{filePath}'");
+
+        if (fileInfo.Length > 100 * 1024 * 1024) // 100MB limit
+            throw new InvalidDataException($"File exceeds maximum size of 100MB: '{filePath}'");
+
         _cfb = new CfbReader(filePath);
         _password = password;
         InitializeStreams();
     }
 
-    
+
 
     public DocReader(Stream stream, string? password = null)
     {
+        if (stream == null)
+            throw new ArgumentNullException(nameof(stream));
+
+        if (!stream.CanRead)
+            throw new ArgumentException("Stream must be readable.", nameof(stream));
+
+        if (stream.Length == 0)
+            throw new InvalidDataException("Stream is empty.");
+
+        if (stream.Length > 100 * 1024 * 1024) // 100MB limit
+            throw new InvalidDataException("Stream exceeds maximum size of 100MB.");
+
         _cfb = new CfbReader(stream, leaveOpen: true);
         _password = password;
         InitializeStreams();
